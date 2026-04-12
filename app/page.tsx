@@ -16,6 +16,7 @@ import { Provider, useSetAtom, useAtomValue } from 'jotai';
 import { Sidebar } from '../components/layout/Sidebar';
 import { TopHeader } from '../components/layout/TopHeader';
 import { MaterialIcon } from '../components/ui/MaterialIcon';
+import { NodeLibrary } from '../components/ui/NodeLibrary';
 
 // Custom Nodes
 import { TriggerNode } from '../components/nodes/TriggerNode';
@@ -44,11 +45,13 @@ const initialNodes = [
   { id: '5', type: 'script', position: { x: 450, y: 460 }, data: {} },
 ];
 
+const defaultEdgeStyle = { stroke: '#94a3b8', strokeWidth: 3, strokeDasharray: '6' };
+
 const initialEdges = [
-  { id: 'e1-2', source: '1', target: '2', animated: true },
-  { id: 'e2-3', source: '2', target: '3', animated: true },
-  { id: 'e3-4', source: '3', sourceHandle: 'true', target: '4', animated: true },
-  { id: 'e3-5', source: '3', sourceHandle: 'false', target: '5', animated: true },
+  { id: 'e1-2', source: '1', target: '2', animated: true, type: 'smoothstep', style: defaultEdgeStyle },
+  { id: 'e2-3', source: '2', target: '3', animated: true, type: 'smoothstep', style: defaultEdgeStyle },
+  { id: 'e3-4', source: '3', sourceHandle: 'true', target: '4', animated: true, type: 'smoothstep', style: defaultEdgeStyle },
+  { id: 'e3-5', source: '3', sourceHandle: 'false', target: '5', animated: true, type: 'smoothstep', style: defaultEdgeStyle },
 ] as any[];
 
 let id = 6;
@@ -96,7 +99,7 @@ function WorkflowCanvas() {
 
     // Entering Live Event Socket Loop Mode
     console.log("[ExecutionStore] Establishing Live WebSocket Stream...");
-    
+
     // Wipe specific nodes to show a fresh 'loading' phase simulating real-time activity
     setNode3({ nodeId: '3', status: 'running' });
     setNode4({ nodeId: '4', status: 'running' });
@@ -114,15 +117,20 @@ function WorkflowCanvas() {
   }, [isLive, setNode1, setNode2, setNode3, setNode4, setNode5]);
 
   const onConnect = useCallback(
-    (params: any) => setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#afb3ac', strokeWidth: 2, strokeDasharray: '4' } }, eds)),
+    (params: any) => setEdges((eds) => addEdge({ ...params, type: 'smoothstep', animated: true, style: defaultEdgeStyle }, eds)),
     [setEdges]
   );
+
+  const handleAddNode = useCallback((type: 'trigger' | 'condition' | 'http' | 'delay' | 'script') => {
+    // Generate new nodes roughly in the middle of standard viewport
+    setNodes(nds => nds.concat({ id: getId(), type, position: { x: window.innerWidth / 2 - 100, y: window.innerHeight / 2 - 100 }, data: {} }));
+  }, [setNodes]);
 
   return (
     <div className="flex h-screen w-full bg-[#fafaf5] font-sans overflow-hidden text-stone-800">
       {/* Import Manrope and Inter fonts & Icons from HTML */}
-      <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"/>
-      <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+      <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+      <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
       <style>{`
         .react-flow__nodesselection-rect {
           display: none !important;
@@ -137,19 +145,8 @@ function WorkflowCanvas() {
         {/* Extracted Top Header Layout */}
         <TopHeader />
 
-        {/* Drag & Drop Node Library (Minimalist Strip) */}
-        <div className="absolute top-20 left-6 flex items-center gap-3 p-2 bg-white/60 backdrop-blur-md rounded-2xl border border-stone-200 shadow-sm z-20">
-          <button 
-            onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'trigger', position: { x: 100, y: 100 }, data: {} }))}
-            className="w-10 h-10 flex items-center justify-center bg-white hover:bg-blue-600 hover:text-white transition-all text-stone-500 rounded-xl shadow-sm" title="Add Trigger">
-            <MaterialIcon icon="add_circle" />
-          </button>
-          <div className="w-[1px] h-6 bg-stone-200"></div>
-          <button onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'condition', position: { x: 100, y: 100 }, data: {} }))} className="w-10 h-10 flex items-center justify-center bg-white hover:bg-blue-600 hover:text-white rounded-xl text-stone-500 transition-colors shadow-sm" title="Logic"><MaterialIcon icon="fork_right" /></button>
-          <button onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'http', position: { x: 100, y: 100 }, data: {} }))} className="w-10 h-10 flex items-center justify-center bg-white hover:bg-blue-600 hover:text-white rounded-xl text-stone-500 transition-colors shadow-sm" title="Action"><MaterialIcon icon="cloud_sync" /></button>
-          <button onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'delay', position: { x: 100, y: 100 }, data: {} }))} className="w-10 h-10 flex items-center justify-center bg-white hover:bg-blue-600 hover:text-white rounded-xl text-stone-500 transition-colors shadow-sm" title="Delay"><MaterialIcon icon="timer" /></button>
-          <button onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'script', position: { x: 100, y: 100 }, data: {} }))} className="w-10 h-10 flex items-center justify-center bg-white hover:bg-blue-600 hover:text-white rounded-xl text-stone-500 transition-colors shadow-sm" title="Script"><MaterialIcon icon="terminal" /></button>
-        </div>
+        {/* Extracted Vertical Action Menu */}
+        <NodeLibrary onAddNode={handleAddNode} />
 
         {/* Canvas Area */}
         <div className="flex-1 w-full relative">
@@ -173,40 +170,40 @@ function WorkflowCanvas() {
           >
             {/* Native XYFlow styling for the dot grid using stitch colors */}
             <Background gap={24} size={2} color="#afb3ac" style={{ backgroundColor: '#fafaf5' }} />
-            
+
             {/* Centered Zoom Controls Overlay */}
-             <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-white shadow-xl p-1.5 rounded-xl z-20 border border-stone-200">
-               <button className="p-2 hover:bg-stone-100 rounded-lg text-stone-500 transition-colors">
-                 <MaterialIcon icon="add" />
-               </button>
-               <div className="w-[1px] h-4 bg-stone-200 mx-1"></div>
-               <button className="p-2 hover:bg-stone-100 rounded-lg text-stone-500 transition-colors">
-                 <MaterialIcon icon="remove" />
-               </button>
-               <div className="w-[1px] h-4 bg-stone-200 mx-1"></div>
-               <button className="p-2 hover:bg-stone-100 rounded-lg text-stone-500 transition-colors">
-                 <MaterialIcon icon="center_focus_weak" />
-               </button>
-               <div className="px-3 py-1.5 text-xs font-semibold text-stone-500">100%</div>
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-white shadow-xl p-1.5 rounded-xl z-20 border border-stone-200">
+              <button className="p-2 hover:bg-stone-100 rounded-lg text-stone-500 transition-colors">
+                <MaterialIcon icon="add" />
+              </button>
+              <div className="w-[1px] h-4 bg-stone-200 mx-1"></div>
+              <button className="p-2 hover:bg-stone-100 rounded-lg text-stone-500 transition-colors">
+                <MaterialIcon icon="remove" />
+              </button>
+              <div className="w-[1px] h-4 bg-stone-200 mx-1"></div>
+              <button className="p-2 hover:bg-stone-100 rounded-lg text-stone-500 transition-colors">
+                <MaterialIcon icon="center_focus_weak" />
+              </button>
+              <div className="px-3 py-1.5 text-xs font-semibold text-stone-500">100%</div>
             </div>
-            
+
             {/* Input Mode Toggle */}
-             <Panel position="bottom-right" className="bg-white px-2 py-1.5 rounded-xl shadow-lg border border-stone-200 m-6 flex gap-1 items-center">
-               <button 
-                 onClick={() => setInputMode('mouse')}
-                 className={`p-2 rounded-lg flex items-center justify-center transition-colors ${inputMode === 'mouse' ? 'bg-blue-50 text-blue-600' : 'text-stone-400 hover:text-stone-600 hover:bg-stone-50'}`}
-                 title="Mouse Mode (Shift+Drag to pan, Scroll to zoom, Drag to select)"
-               >
-                 <MaterialIcon icon="mouse" className="text-xl" />
-               </button>
-               <div className="w-[1px] h-5 bg-stone-200 mx-1"></div>
-               <button 
-                 onClick={() => setInputMode('trackpad')}
-                 className={`p-2 rounded-lg flex items-center justify-center transition-colors ${inputMode === 'trackpad' ? 'bg-blue-50 text-blue-600' : 'text-stone-400 hover:text-stone-600 hover:bg-stone-50'}`}
-                 title="Trackpad Mode (Scroll to pan, pinch/cmd-scroll to zoom)"
-               >
-                 <MaterialIcon icon="touchpad_mouse" className="text-xl" />
-               </button>
+            <Panel position="bottom-right" className="bg-white px-2 py-1.5 rounded-xl shadow-lg border border-stone-200 m-6 flex gap-1 items-center">
+              <button
+                onClick={() => setInputMode('mouse')}
+                className={`p-2 rounded-lg flex items-center justify-center transition-colors ${inputMode === 'mouse' ? 'bg-blue-50 text-blue-600' : 'text-stone-400 hover:text-stone-600 hover:bg-stone-50'}`}
+                title="Mouse Mode (Shift+Drag to pan, Scroll to zoom, Drag to select)"
+              >
+                <MaterialIcon icon="mouse" className="text-xl" />
+              </button>
+              <div className="w-[1px] h-5 bg-stone-200 mx-1"></div>
+              <button
+                onClick={() => setInputMode('trackpad')}
+                className={`p-2 rounded-lg flex items-center justify-center transition-colors ${inputMode === 'trackpad' ? 'bg-blue-50 text-blue-600' : 'text-stone-400 hover:text-stone-600 hover:bg-stone-50'}`}
+                title="Trackpad Mode (Scroll to pan, pinch/cmd-scroll to zoom)"
+              >
+                <MaterialIcon icon="touchpad_mouse" className="text-xl" />
+              </button>
             </Panel>
           </ReactFlow>
         </div>

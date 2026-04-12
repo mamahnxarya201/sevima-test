@@ -1,10 +1,22 @@
-import React from 'react';
-import { MaterialIcon } from '../ui/MaterialIcon';
+'use client';
 
-export const Sidebar = () => (
-  <aside className="h-full flex flex-col p-4 gap-2 bg-stone-100 w-64 z-40 border-r border-stone-200 shrink-0 relative">
-    <div className="flex items-center gap-3 px-2 mb-8">
-      <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-700 to-blue-400 flex items-center justify-center">
+import React from 'react';
+import { useAtomValue } from 'jotai';
+import { MaterialIcon } from '../ui/MaterialIcon';
+import { isSidebarOpenAtom } from '../../store/workflowStore';
+
+export const Sidebar = () => {
+  const isOpen = useAtomValue(isSidebarOpenAtom);
+
+  return (
+    <aside 
+      className={`h-full bg-stone-100 z-40 shrink-0 relative transition-all duration-500 ease-in-out overflow-hidden
+        ${isOpen ? 'w-64 opacity-100 border-r border-stone-200' : 'w-0 opacity-0 border-r-0'}
+      `}
+    >
+      <div className="w-64 flex flex-col h-full p-4 gap-2">
+        <div className="flex items-center gap-3 px-2 mb-8">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-700 to-blue-400 flex items-center justify-center shrink-0">
         <MaterialIcon icon="account_tree" className="text-white text-lg" />
       </div>
       <div>
@@ -41,10 +53,12 @@ export const Sidebar = () => (
         <MaterialIcon icon="help_outline" />
         <span className="text-sm">Help</span>
       </button>
-      <button className="flex items-center gap-3 px-3 py-2.5 text-stone-600 hover:bg-stone-200/50 transition-all rounded-lg">
-        <MaterialIcon icon="settings" />
-        <span className="text-sm">Settings</span>
-      </button>
+        <button className="flex items-center gap-3 px-3 py-2.5 text-stone-600 hover:bg-stone-200/50 transition-all rounded-lg">
+          <MaterialIcon icon="settings" />
+          <span className="text-sm">Settings</span>
+        </button>
+      </div>
     </div>
   </aside>
-);
+  );
+};
