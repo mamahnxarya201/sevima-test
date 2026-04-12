@@ -10,6 +10,7 @@ import {
   Panel
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { Provider, useSetAtom, useAtomValue } from 'jotai';
 
 // Layout & UI Components
 import { Sidebar } from '../components/layout/Sidebar';
@@ -23,6 +24,9 @@ import { ConditionNode } from '../components/nodes/ConditionNode';
 import { ScriptNode } from '../components/nodes/ScriptNode';
 import { DelayNode } from '../components/nodes/DelayNode';
 
+// Jotai State
+import { nodeExecutionFamily, isLiveConnectionEnabledAtom } from '../store/executionStore';
+
 const nodeTypes = {
   trigger: TriggerNode,
   http: HttpNode,
@@ -31,13 +35,13 @@ const nodeTypes = {
   condition: ConditionNode,
 };
 
-// Initial state showcasing mock live execution statuses
+// Initial state showcasing purely configurational values now (volatiles removed!)
 const initialNodes = [
-  { id: '1', type: 'trigger', position: { x: 300, y: 50 }, data: { status: 'success' } },
-  { id: '2', type: 'http', position: { x: 300, y: 150 }, data: { status: 'success' } },
-  { id: '3', type: 'condition', position: { x: 260, y: 280 }, data: { status: 'running' } },
-  { id: '4', type: 'delay', position: { x: 150, y: 460 }, data: { status: 'idle' } },
-  { id: '5', type: 'script', position: { x: 450, y: 460 }, data: { status: 'failed' } },
+  { id: '1', type: 'trigger', position: { x: 300, y: 50 }, data: {} },
+  { id: '2', type: 'http', position: { x: 300, y: 150 }, data: {} },
+  { id: '3', type: 'condition', position: { x: 260, y: 280 }, data: {} },
+  { id: '4', type: 'delay', position: { x: 150, y: 460 }, data: {} },
+  { id: '5', type: 'script', position: { x: 450, y: 460 }, data: {} },
 ];
 
 const initialEdges = [
@@ -50,10 +54,19 @@ const initialEdges = [
 let id = 6;
 const getId = () => `${id++}`;
 
-export default function WorkflowPrototyper() {
+function WorkflowCanvas() {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [inputMode, setInputMode] = React.useState<'mouse' | 'trackpad'>('mouse');
+
+  // Memory Atom Tie-ins to simulate highly-scalable WebSockets
+  const setNode1 = useSetAtom(nodeExecutionFamily('1'));
+  const setNode2 = useSetAtom(nodeExecutionFamily('2'));
+  const setNode3 = useSetAtom(nodeExecutionFamily('3'));
+  const setNode4 = useSetAtom(nodeExecutionFamily('4'));
+  const setNode5 = useSetAtom(nodeExecutionFamily('5'));
+
+  const isLive = useAtomValue(isLiveConnectionEnabledAtom);
 
   // Disable native context menu robustly to handle Firefox race conditions
   useEffect(() => {
@@ -65,6 +78,40 @@ export default function WorkflowPrototyper() {
       document.removeEventListener('contextmenu', handleContextMenu);
     };
   }, []);
+
+  // Simulating an arriving WebSocket payload vs traditional API Fetch Protocol
+  useEffect(() => {
+    if (!isLive) {
+      // Execute mocked REST Initial Fetch Protocol
+      console.log("[ExecutionStore] Fetching Static REST Snapshot...");
+      setTimeout(() => {
+        setNode1({ nodeId: '1', status: 'success' });
+        setNode2({ nodeId: '2', status: 'success' });
+        setNode3({ nodeId: '3', status: 'idle' });
+        setNode4({ nodeId: '4', status: 'idle', isLoading: true });
+        setNode5({ nodeId: '5', status: 'idle' });
+      }, 500);
+      return;
+    }
+
+    // Entering Live Event Socket Loop Mode
+    console.log("[ExecutionStore] Establishing Live WebSocket Stream...");
+    
+    // Wipe specific nodes to show a fresh 'loading' phase simulating real-time activity
+    setNode3({ nodeId: '3', status: 'running' });
+    setNode4({ nodeId: '4', status: 'running' });
+    setNode5({ nodeId: '5', status: 'idle' });
+
+    // Stream random mock error directly via websocket
+    const simulateLiveIncomingPacket = setInterval(() => {
+      setNode5({ nodeId: '5', status: 'failed', error: "WS Event: Dynamic payload violation in streaming context." });
+    }, 2000);
+
+    return () => {
+      console.log("[ExecutionStore] Halting Live WebSocket Stream...");
+      clearInterval(simulateLiveIncomingPacket);
+    };
+  }, [isLive, setNode1, setNode2, setNode3, setNode4, setNode5]);
 
   const onConnect = useCallback(
     (params: any) => setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#afb3ac', strokeWidth: 2, strokeDasharray: '4' } }, eds)),
@@ -93,15 +140,15 @@ export default function WorkflowPrototyper() {
         {/* Drag & Drop Node Library (Minimalist Strip) */}
         <div className="absolute top-20 left-6 flex items-center gap-3 p-2 bg-white/60 backdrop-blur-md rounded-2xl border border-stone-200 shadow-sm z-20">
           <button 
-            onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'trigger', position: { x: 100, y: 100 }, data: { status: 'idle' } }))}
+            onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'trigger', position: { x: 100, y: 100 }, data: {} }))}
             className="w-10 h-10 flex items-center justify-center bg-white hover:bg-blue-600 hover:text-white transition-all text-stone-500 rounded-xl shadow-sm" title="Add Trigger">
             <MaterialIcon icon="add_circle" />
           </button>
           <div className="w-[1px] h-6 bg-stone-200"></div>
-          <button onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'condition', position: { x: 100, y: 100 }, data: { status: 'idle' } }))} className="w-10 h-10 flex items-center justify-center bg-white hover:bg-blue-600 hover:text-white rounded-xl text-stone-500 transition-colors shadow-sm" title="Logic"><MaterialIcon icon="fork_right" /></button>
-          <button onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'http', position: { x: 100, y: 100 }, data: { status: 'idle' } }))} className="w-10 h-10 flex items-center justify-center bg-white hover:bg-blue-600 hover:text-white rounded-xl text-stone-500 transition-colors shadow-sm" title="Action"><MaterialIcon icon="cloud_sync" /></button>
-          <button onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'delay', position: { x: 100, y: 100 }, data: { status: 'idle' } }))} className="w-10 h-10 flex items-center justify-center bg-white hover:bg-blue-600 hover:text-white rounded-xl text-stone-500 transition-colors shadow-sm" title="Delay"><MaterialIcon icon="timer" /></button>
-          <button onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'script', position: { x: 100, y: 100 }, data: { status: 'idle' } }))} className="w-10 h-10 flex items-center justify-center bg-white hover:bg-blue-600 hover:text-white rounded-xl text-stone-500 transition-colors shadow-sm" title="Script"><MaterialIcon icon="terminal" /></button>
+          <button onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'condition', position: { x: 100, y: 100 }, data: {} }))} className="w-10 h-10 flex items-center justify-center bg-white hover:bg-blue-600 hover:text-white rounded-xl text-stone-500 transition-colors shadow-sm" title="Logic"><MaterialIcon icon="fork_right" /></button>
+          <button onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'http', position: { x: 100, y: 100 }, data: {} }))} className="w-10 h-10 flex items-center justify-center bg-white hover:bg-blue-600 hover:text-white rounded-xl text-stone-500 transition-colors shadow-sm" title="Action"><MaterialIcon icon="cloud_sync" /></button>
+          <button onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'delay', position: { x: 100, y: 100 }, data: {} }))} className="w-10 h-10 flex items-center justify-center bg-white hover:bg-blue-600 hover:text-white rounded-xl text-stone-500 transition-colors shadow-sm" title="Delay"><MaterialIcon icon="timer" /></button>
+          <button onClick={() => setNodes(nds => nds.concat({ id: getId(), type: 'script', position: { x: 100, y: 100 }, data: {} }))} className="w-10 h-10 flex items-center justify-center bg-white hover:bg-blue-600 hover:text-white rounded-xl text-stone-500 transition-colors shadow-sm" title="Script"><MaterialIcon icon="terminal" /></button>
         </div>
 
         {/* Canvas Area */}
@@ -165,5 +212,14 @@ export default function WorkflowPrototyper() {
         </div>
       </main>
     </div>
+  );
+}
+
+// Ensure SSR Strict Memory Boundary by mounting Jotai universally!
+export default function WorkflowPrototyper() {
+  return (
+    <Provider>
+      <WorkflowCanvas />
+    </Provider>
   );
 }

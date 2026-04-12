@@ -1,5 +1,6 @@
 import React from 'react';
 import { MaterialIcon } from '../ui/MaterialIcon';
+import { LiveConnectionToggle } from '../ui/LiveConnectionToggle';
 
 export const TopHeader = () => (
   <header className="w-full sticky top-0 z-50 flex justify-between items-center px-6 py-3 bg-stone-50/80 backdrop-blur-md shadow-sm border-b border-stone-200/50">
@@ -12,6 +13,7 @@ export const TopHeader = () => (
       </div>
     </div>
     <div className="flex items-center gap-4">
+      <LiveConnectionToggle />
       <div className="flex items-center gap-2 pr-4 border-r border-stone-200">
         <button className="p-2 text-stone-500 hover:text-stone-800 transition-colors"><MaterialIcon icon="help" /></button>
         <button className="p-2 text-stone-500 hover:text-stone-800 transition-colors relative">
