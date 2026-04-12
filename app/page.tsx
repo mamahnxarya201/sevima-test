@@ -7,7 +7,9 @@ import {
   useNodesState,
   useEdgesState,
   Background,
-  Panel
+  Panel,
+  useReactFlow,
+  ReactFlowProvider
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Provider, useSetAtom, useAtomValue } from 'jotai';
@@ -17,6 +19,7 @@ import { Sidebar } from '../components/layout/Sidebar';
 import { TopHeader } from '../components/layout/TopHeader';
 import { MaterialIcon } from '../components/ui/MaterialIcon';
 import { NodeLibrary } from '../components/ui/NodeLibrary';
+import { ContextMenu } from '../components/ui/ContextMenu';
 
 // Custom Nodes
 import { TriggerNode } from '../components/nodes/TriggerNode';
@@ -61,6 +64,14 @@ function WorkflowCanvas() {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [inputMode, setInputMode] = React.useState<'mouse' | 'trackpad'>('mouse');
+  const { screenToFlowPosition } = useReactFlow();
+
+  // Context Menu State
+  const [menu, setMenu] = React.useState<{ x: number, y: number, entity: { id: string | null, type: 'node'|'edge'|'pane' } } | null>(null);
+  
+  // Quick Connect Menu State
+  const [miniMenu, setMiniMenu] = React.useState<{ x: number, y: number, sourceNodeId: string } | null>(null);
+  const connectingNodeId = React.useRef<string | null>(null);
 
   // Memory Atom Tie-ins to simulate highly-scalable WebSockets
   const setNode1 = useSetAtom(nodeExecutionFamily('1'));
@@ -121,10 +132,50 @@ function WorkflowCanvas() {
     [setEdges]
   );
 
-  const handleAddNode = useCallback((type: 'trigger' | 'condition' | 'http' | 'delay' | 'script') => {
-    // Generate new nodes roughly in the middle of standard viewport
-    setNodes(nds => nds.concat({ id: getId(), type, position: { x: window.innerWidth / 2 - 100, y: window.innerHeight / 2 - 100 }, data: {} }));
-  }, [setNodes]);
+  const handleAddNode = useCallback((type: 'trigger' | 'condition' | 'http' | 'delay' | 'script', meta?: { x: number, y: number, sourceId: string | null }) => {
+    const id = getId();
+    let position = { x: window.innerWidth / 2 - 100, y: window.innerHeight / 2 - 100 };
+    
+    if (meta) {
+      position = screenToFlowPosition({ x: meta.x, y: meta.y });
+    }
+
+    setNodes(nds => nds.concat({ id, type, position, data: {} }));
+    
+    if (meta?.sourceId) {
+      setEdges(eds => eds.concat({ id: `e${meta.sourceId}-${id}`, source: meta.sourceId, target: id, type: 'smoothstep', animated: true, style: defaultEdgeStyle }));
+    }
+  }, [setNodes, setEdges, screenToFlowPosition]);
+
+  const onConnectStart = useCallback((_: any, { nodeId }: any) => {
+    connectingNodeId.current = nodeId;
+  }, []);
+
+  const onConnectEnd = useCallback((event: any, connectionState: any) => {
+    if (connectionState.isValid) return; // ignore if successfully connected to a node
+    
+    const { clientX, clientY } = 'changedTouches' in event ? event.changedTouches[0] : event;
+    const sourceNodeId = connectionState?.fromNode?.id || connectingNodeId.current;
+
+    setMiniMenu({ x: clientX, y: clientY, sourceNodeId });
+    connectingNodeId.current = null;
+  }, []);
+
+  const onNodeContextMenu = useCallback(
+    (e: React.MouseEvent, node: any) => {
+      e.preventDefault();
+      setMenu({ x: e.clientX, y: e.clientY, entity: { id: node.id, type: 'node' } });
+    },
+    []
+  );
+
+  const onEdgeContextMenu = useCallback(
+    (e: React.MouseEvent, edge: any) => {
+      e.preventDefault();
+      setMenu({ x: e.clientX, y: e.clientY, entity: { id: edge.id, type: 'edge' } });
+    },
+    []
+  );
 
   return (
     <div className="flex h-screen w-full bg-[#fafaf5] font-sans overflow-hidden text-stone-800">
@@ -156,13 +207,19 @@ function WorkflowCanvas() {
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onConnectStart={onConnectStart}
+            onConnectEnd={onConnectEnd}
+            onNodeContextMenu={onNodeContextMenu}
+            onEdgeContextMenu={onEdgeContextMenu}
+            onPaneClick={() => { setMenu(null); setMiniMenu(null); }}
+            onPaneContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, entity: { id: null, type: 'pane' }}); setMiniMenu(null); }}
             nodeTypes={nodeTypes}
             fitView
             fitViewOptions={{ padding: 0.1 }}
             panOnScroll={inputMode === 'trackpad'}
             zoomOnScroll={inputMode === 'mouse'}
             panOnDrag={false}
-            selectionOnDrag={inputMode === 'mouse'}
+            selectionOnDrag={inputMode === 'mouse' || inputMode === 'trackpad'}
             panActivationKeyCode="Shift"
             selectionKeyCode={null}
             selectionMode={"partial" as any}
@@ -205,6 +262,26 @@ function WorkflowCanvas() {
                 <MaterialIcon icon="touchpad_mouse" className="text-xl" />
               </button>
             </Panel>
+            
+            {/* Global floating context menu overlay */}
+            {menu && (
+              <ContextMenu 
+                x={menu.x} 
+                y={menu.y} 
+                entity={menu.entity} 
+                onClose={() => setMenu(null)} 
+              />
+            )}
+
+            {/* Quick-connect inline Node drop popover */}
+            {miniMenu && (
+              <div style={{ position: 'fixed', left: miniMenu.x, top: Math.max(0, miniMenu.y - 60), zIndex: 60 }} className="absolute">
+                <NodeLibrary isMini onAddNode={(type) => {
+                  handleAddNode(type, { x: miniMenu.x, y: miniMenu.y, sourceId: miniMenu.sourceNodeId });
+                  setMiniMenu(null);
+                }} />
+              </div>
+            )}
           </ReactFlow>
         </div>
       </main>
@@ -216,7 +293,9 @@ function WorkflowCanvas() {
 export default function WorkflowPrototyper() {
   return (
     <Provider>
-      <WorkflowCanvas />
+      <ReactFlowProvider>
+        <WorkflowCanvas />
+      </ReactFlowProvider>
     </Provider>
   );
 }
