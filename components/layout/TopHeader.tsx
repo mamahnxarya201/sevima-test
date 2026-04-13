@@ -104,7 +104,7 @@ export const TopHeader = () => {
   // ── Render ─ten─n─Name─────────────────────────────────────────────────────────
 
   return (
-    <header className="w-full sticky top-0 z-50 flex justify-between items-center px-6 py-3 bg-stone-50/80 backdrop-blur-md shadow-sm border-b border-stone-200/50">
+    <header className="w-full sticky top-0 z-50 flex justify-between items-center px-6 py-3 bg-[#fafaf5]/45 backdrop-blur-[20px] backdrop-saturate-150 shadow-[0_8px_32px_rgba(47,52,46,0.04)] border-b border-[#afb3ac]/12">
       <div className="flex items-center gap-6">
         <Link
           href="/workflows"

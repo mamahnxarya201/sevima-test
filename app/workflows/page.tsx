@@ -116,7 +116,7 @@ export default function WorkflowsPage() {
       <AppShellSidebar items={navItems} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-40 flex flex-wrap items-center justify-between gap-4 border-b border-[#afb3ac]/15 bg-[#fafaf5]/85 px-8 py-5 backdrop-blur-[20px]">
+        <header className="sticky top-0 z-40 bg-[#fafaf5]/85 px-8 py-6 backdrop-blur-[20px]">
           <div>
             <h1 className="font-['Manrope'] text-2xl font-bold tracking-tight text-[#2f342e]">
               Workflows
@@ -125,56 +125,60 @@ export default function WorkflowsPage() {
               Open an automation to edit, or create a new one. Changes stay in your tenant.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setModalOpen(true)}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#3a6095] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#2c4c77] active:bg-[#264060]"
-          >
-            <MaterialIcon icon="add" className="text-lg" />
-            New workflow
-          </button>
         </header>
 
         <main className="flex-1 px-8 py-8">
           <div className="mx-auto max-w-5xl">
-            <div className="mb-8 flex flex-wrap items-end gap-4">
-              <div className="min-w-[200px] flex-1">
-                <label
-                  htmlFor="wf-search"
-                  className="mb-1.5 block text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-[#afb3ac]"
+            <div className="mb-8 flex flex-col gap-4">
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#3a6095] px-3 py-1.5 text-[12px] font-semibold text-white shadow-sm transition-colors hover:bg-[#2c4c77]"
                 >
-                  Search
-                </label>
-                <div className="relative">
-                  <MaterialIcon
-                    icon="search"
-                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#afb3ac]"
-                  />
-                  <input
-                    id="wf-search"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Filter by name or description"
-                    className="w-full rounded-xl border-0 bg-white py-2.5 pl-10 pr-3 text-[13px] text-[#2f342e] shadow-inner outline-none ring-1 ring-[#afb3ac]/15 transition-shadow focus:ring-2 focus:ring-[#3a6095]"
-                  />
-                </div>
+                  <MaterialIcon icon="add" className="text-[16px]" />
+                  New workflow
+                </button>
               </div>
-              <div>
-                <label
-                  htmlFor="wf-sort"
-                  className="mb-1.5 block text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-[#afb3ac]"
-                >
-                  Sort
-                </label>
-                <select
-                  id="wf-sort"
-                  value={sort}
-                  onChange={(e) => setSort(e.target.value as 'updated' | 'name')}
-                  className="rounded-xl border-0 bg-white py-2.5 pl-3 pr-8 text-[13px] font-medium text-[#2f342e] shadow-inner outline-none ring-1 ring-[#afb3ac]/15 transition-shadow focus:ring-2 focus:ring-[#3a6095]"
-                >
-                  <option value="updated">Last updated</option>
-                  <option value="name">Name (A–Z)</option>
-                </select>
+              <div className="flex flex-wrap items-end gap-4">
+                <div className="min-w-0 flex-1 sm:min-w-[200px]">
+                  <label
+                    htmlFor="wf-search"
+                    className="mb-1.5 block text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-[#afb3ac]"
+                  >
+                    Search
+                  </label>
+                  <div className="relative">
+                    <MaterialIcon
+                      icon="search"
+                      className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#afb3ac]"
+                    />
+                    <input
+                      id="wf-search"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Filter by name or description"
+                      className="w-full rounded-xl border-0 bg-white py-2.5 pl-10 pr-3 text-[13px] text-[#2f342e] shadow-inner outline-none ring-1 ring-[#afb3ac]/15 transition-shadow focus:ring-2 focus:ring-[#3a6095]"
+                    />
+                  </div>
+                </div>
+                <div className="shrink-0">
+                  <label
+                    htmlFor="wf-sort"
+                    className="mb-1.5 block text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-[#afb3ac]"
+                  >
+                    Sort
+                  </label>
+                  <select
+                    id="wf-sort"
+                    value={sort}
+                    onChange={(e) => setSort(e.target.value as 'updated' | 'name')}
+                    className="rounded-xl border-0 bg-white py-2.5 pl-3 pr-8 text-[13px] font-medium text-[#2f342e] shadow-inner outline-none ring-1 ring-[#afb3ac]/15 transition-shadow focus:ring-2 focus:ring-[#3a6095]"
+                  >
+                    <option value="updated">Last updated</option>
+                    <option value="name">Name (A–Z)</option>
+                  </select>
+                </div>
               </div>
             </div>
 
@@ -187,21 +191,23 @@ export default function WorkflowsPage() {
             {loading ? (
               <p className="text-[13px] font-medium text-[#afb3ac]">Loading workflows…</p>
             ) : items.length === 0 ? (
-              <div className="rounded-[1.5rem] bg-[#edefe8] px-8 py-16 text-center">
-                <p className="font-['Manrope'] text-lg font-semibold text-[#2f342e]">
+              <div className="rounded-[1.5rem] bg-[#edefe8] px-8 py-16">
+                <p className="text-center font-['Manrope'] text-lg font-semibold text-[#2f342e]">
                   No workflows yet
                 </p>
-                <p className="mt-2 text-[13px] text-[#afb3ac]">
+                <p className="mt-2 text-center text-[13px] text-[#afb3ac]">
                   Create one to get started — you&apos;ll draw the graph on the canvas next.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(true)}
-                  className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#3a6095] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#2c4c77]"
-                >
-                  <MaterialIcon icon="add" />
-                  New workflow
-                </button>
+                <div className="mt-10 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => setModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#3a6095] px-3 py-1.5 text-[12px] font-semibold text-white shadow-sm transition-colors hover:bg-[#2c4c77]"
+                  >
+                    <MaterialIcon icon="add" className="text-[16px]" />
+                    New workflow
+                  </button>
+                </div>
               </div>
             ) : (
               <ul className="space-y-4">
