@@ -85,12 +85,17 @@ export async function POST(request: NextRequest) {
     const port = urlParts.port || '5432';
     const connectionUrl = `postgresql://${dbUser}:${dbPassword}@${host}:${port}/${dbName}`;
 
-    // Run tenant schema migrations against the new DB
+    // Run tenant schema migrations against the new DB (prisma/tenant/* — NOT prisma/migrations)
     try {
-      execSync(
-        `DATABASE_URL="${connectionUrl}" TENANT_DATABASE_URL="${connectionUrl}" npx prisma migrate deploy --schema prisma/tenant.prisma`,
-        { stdio: 'pipe', cwd: process.cwd() }
-      );
+      execSync('npx prisma migrate deploy --schema prisma/tenant/schema.prisma', {
+        stdio: 'pipe',
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          DATABASE_URL: connectionUrl,
+          TENANT_DATABASE_URL: connectionUrl,
+        },
+      });
     } catch (migrateErr) {
       console.error('[tenants] Migration failed:', migrateErr);
       return Response.json({ error: 'Tenant DB migration failed' }, { status: 500 });

@@ -1,13 +1,13 @@
 generator client {
   provider      = "prisma-client-js"
-  output        = "../lib/generated/tenant-client"
+  output        = "../../lib/generated/tenant-client"
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
   provider = "postgresql"
-  /// This env var is ONLY used by `prisma migrate deploy` in the CLI script.
-  /// At runtime, the URL is overridden per-request via PrismaClient({ datasources })
+  /// Used only by `prisma migrate deploy --schema prisma/tenant/schema.prisma`.
+  /// At runtime, URL is overridden per-request via PrismaClient({ datasources }).
   url      = env("TENANT_DATABASE_URL")
 }
 

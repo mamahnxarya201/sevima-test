@@ -1,3 +1,8 @@
+---
+globs:
+ApplyIntelligently: false
+---
+
 # Design System Document: The Focused Editorial
 
 ## 1. Overview & Creative North Star

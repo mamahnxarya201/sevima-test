@@ -32,20 +32,22 @@ BETTER_AUTH_URL="http://localhost:3000"
 ### 2. Stand up Infrastructure
 Spin up the `postgres` core container:
 ```bash
-docker-compose up -d db
+docker-compose up
 ```
 
 ### 3. Generate & Migrate schemas
 Generate the binary engines for BOTH the Host and Alpine environments:
 ```bash
 npx prisma generate --schema prisma/management.prisma
-npx prisma generate --schema prisma/tenant.prisma
+# and the prisma client
+npx prisma generate --schema prisma/management.prisma
+npx prisma generate --schema prisma/tenant/schema.prisma
 ```
 
-Bootstrap the tables into your `management_db`:
-```bash
-npx prisma migrate dev --schema prisma/management.prisma --name init
-```
+
+Tenant migrations live under **`prisma/tenant/migrations/`** (schema: `prisma/tenant/schema.prisma`). Do **not** point `migrate deploy` at `prisma/management.prisma` for tenant DBs — the root `prisma/migrations/` folder is for the management database only.
+
+**Tenant DBs created before the split:** if `migrate deploy` reports migration history drift, connect to that tenant database and run `DROP TABLE IF EXISTS "_prisma_migrations";`, then `npm run migrate:tenants` (or register a new tenant).
 
 *(Note: Ensure you respond to any drop-column prompts if you change schemas manually! Or use `npx prisma db push --schema prisma/management.prisma` for force resets).*
 

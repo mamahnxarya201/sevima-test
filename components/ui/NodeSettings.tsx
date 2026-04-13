@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { MaterialIcon } from './MaterialIcon';
 import { HttpNodeForm } from '../nodes/HttpNodeForm';
 import { ConditionNodeForm } from '../nodes/ConditionNodeForm';
@@ -8,6 +8,9 @@ import { DelayNodeForm } from '../nodes/DelayNodeForm';
 import { ScriptNodeForm } from '../nodes/ScriptNodeForm';
 
 export const NodeSettings = ({ nodeId, nodeType, onClose }: { nodeId: string, nodeType: string, onClose: () => void }) => {
+  const [retryOnFailure, setRetryOnFailure] = useState(true);
+  const [stopOnError, setStopOnError] = useState(false);
+
   const nodeTypeLabels: Record<string, string> = {
     http: 'Fetch Data',
     script: 'Script Execution',
@@ -61,15 +64,25 @@ export const NodeSettings = ({ nodeId, nodeType, onClose }: { nodeId: string, no
           {/* Toggles (Shared across all nodes) */}
           <div className="flex flex-col gap-4 mt-2 w-full">
             <div className="flex items-center justify-between w-full">
-              <span className="text-[13px] font-semibold text-[#2f342e]/80">Retry on failure</span>
-              <div className="w-11 h-6 shrink-0 bg-[#3a6095] rounded-full relative cursor-pointer shadow-inner">
-                <div className="absolute right-1 top-1 w-4 h-4 bg-white rounded-full shadow-sm"></div>
+              <span className={`text-[13px] font-semibold transition-colors ${retryOnFailure ? 'text-[#2f342e]/80' : 'text-[#afb3ac]'}`}>
+                Retry on failure
+              </span>
+              <div 
+                onClick={() => setRetryOnFailure(!retryOnFailure)}
+                className={`w-11 h-6 shrink-0 rounded-full relative cursor-pointer shadow-inner transition-colors duration-200 ${retryOnFailure ? 'bg-[#3a6095]' : 'bg-[#e0e4dc]'}`}
+              >
+                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all duration-200 ${retryOnFailure ? 'right-1' : 'left-1'}`}></div>
               </div>
             </div>
             <div className="flex items-center justify-between w-full">
-              <span className="text-[13px] font-semibold text-[#afb3ac]">Stop on error</span>
-              <div className="w-11 h-6 shrink-0 bg-[#e0e4dc] rounded-full relative cursor-pointer shadow-inner">
-                <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow-sm"></div>
+              <span className={`text-[13px] font-semibold transition-colors ${stopOnError ? 'text-[#2f342e]/80' : 'text-[#afb3ac]'}`}>
+                Stop on error
+              </span>
+              <div 
+                onClick={() => setStopOnError(!stopOnError)}
+                className={`w-11 h-6 shrink-0 rounded-full relative cursor-pointer shadow-inner transition-colors duration-200 ${stopOnError ? 'bg-[#3a6095]' : 'bg-[#e0e4dc]'}`}
+              >
+                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all duration-200 ${stopOnError ? 'right-1' : 'left-1'}`}></div>
               </div>
             </div>
           </div>

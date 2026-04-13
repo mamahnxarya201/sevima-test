@@ -6,13 +6,15 @@ import {
   addEdge,
   useNodesState,
   useEdgesState,
+  applyNodeChanges,
+  applyEdgeChanges,
   Background,
   Panel,
   useReactFlow,
   ReactFlowProvider
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Provider, useSetAtom, useAtomValue } from 'jotai';
+import { Provider, useSetAtom, useAtomValue, useAtom } from 'jotai';
 
 // Layout & UI Components
 import { Sidebar } from '../components/layout/Sidebar';
@@ -31,6 +33,7 @@ import { DelayNode } from '../components/nodes/DelayNode';
 
 // Jotai State
 import { nodeExecutionFamily, isLiveConnectionEnabledAtom } from '../store/executionStore';
+import { nodesAtom, edgesAtom } from '../store/workflowStore';
 import type { DAGExecutionPayload, ExecutionStatus } from '../store/executionStore';
 
 const nodeTypes = {
@@ -40,20 +43,7 @@ const nodeTypes = {
   condition: ConditionNode,
 };
 
-const initialNodes = [
-  { id: '2', type: 'http',      position: { x: 300, y: 150 }, data: {} },
-  { id: '3', type: 'condition', position: { x: 260, y: 280 }, data: {} },
-  { id: '4', type: 'delay',     position: { x: 150, y: 460 }, data: {} },
-  { id: '5', type: 'script',    position: { x: 450, y: 460 }, data: {} },
-];
-
 const defaultEdgeStyle = { stroke: '#94a3b8', strokeWidth: 3, strokeDasharray: '6' };
-
-const initialEdges = [
-  { id: 'e2-3', source: '2', target: '3', animated: true, type: 'smoothstep', style: defaultEdgeStyle },
-  { id: 'e3-4', source: '3', sourceHandle: 'true',  target: '4', animated: true, type: 'smoothstep', style: defaultEdgeStyle },
-  { id: 'e3-5', source: '3', sourceHandle: 'false', target: '5', animated: true, type: 'smoothstep', style: defaultEdgeStyle },
-] as any[];
 
 let id = 6;
 const getId = () => `${id++}`;
@@ -68,10 +58,20 @@ function mapStatus(s: string): ExecutionStatus {
 }
 
 function WorkflowCanvas() {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [nodes, setNodes] = useAtom(nodesAtom);
+  const [edges, setEdges] = useAtom(edgesAtom);
   const [inputMode, setInputMode] = React.useState<'mouse' | 'trackpad'>('mouse');
   const { screenToFlowPosition } = useReactFlow();
+
+  const onNodesChange = useCallback(
+    (changes: any) => setNodes((nds) => applyNodeChanges(changes, nds)),
+    [setNodes]
+  );
+
+  const onEdgesChange = useCallback(
+    (changes: any) => setEdges((eds) => applyEdgeChanges(changes, eds)),
+    [setEdges]
+  );
 
   // Context Menu
   const [menu, setMenu] = React.useState<{ x: number; y: number; entity: { id: string | null; type: 'node' | 'edge' | 'pane' } } | null>(null);
@@ -161,9 +161,9 @@ function WorkflowCanvas() {
       const nid = getId();
       let position = { x: window.innerWidth / 2 - 100, y: window.innerHeight / 2 - 100 };
       if (meta) position = screenToFlowPosition({ x: meta.x, y: meta.y });
-      setNodes((nds) => nds.concat({ id: nid, type, position, data: {} }));
+      setNodes((nds) => [...nds, { id: nid, type, position, data: {} }]);
       if (meta?.sourceId) {
-        setEdges((eds) => eds.concat({ id: `e${meta.sourceId}-${nid}`, source: meta.sourceId, target: nid, type: 'smoothstep', animated: true, style: defaultEdgeStyle }));
+        setEdges((eds) => [...eds, { id: `e${meta.sourceId}-${nid}`, source: meta.sourceId!, target: nid, type: 'smoothstep', animated: true, style: defaultEdgeStyle }]);
       }
     },
     [setNodes, setEdges, screenToFlowPosition]

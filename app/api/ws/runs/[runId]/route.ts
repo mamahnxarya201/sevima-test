@@ -23,6 +23,10 @@ import { onStepEvent, onRunComplete } from '@/lib/socket/eventBus';
 const BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3000';
 const JWKS = createRemoteJWKSet(new URL(`${BETTER_AUTH_URL}/api/auth/jwks`));
 
+export function GET() {
+  return new Response('WebSocket endpoint', { status: 426 });
+}
+
 export async function SOCKET(
   client: WebSocket,
   request: IncomingMessage,

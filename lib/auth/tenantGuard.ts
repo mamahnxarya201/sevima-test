@@ -44,9 +44,10 @@ export async function resolveTenantContext(request: NextRequest): Promise<Tenant
       issuer: BETTER_AUTH_URL,
       audience: BETTER_AUTH_URL,
     });
+    console.log('p', p);
     payload = p as Record<string, unknown>;
-  } catch {
-    throw new AuthError('Invalid or expired JWT', 401);
+  } catch (err) {
+    throw new AuthError('Invalid or expired JWT: ' + err, 401);
   }
 
   const userId = payload['id'] as string;
@@ -81,5 +82,10 @@ export function authErrorResponse(err: unknown): Response {
   if (err instanceof AuthError) {
     return Response.json({ error: err.message }, { status: err.status });
   }
-  return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  console.error('[authErrorResponse] Unexpected error (not AuthError):', err);
+  const details =
+    process.env.NODE_ENV === 'development' && err instanceof Error
+      ? { details: err.message }
+      : {};
+  return Response.json({ error: 'Internal server error', ...details }, { status: 500 });
 }

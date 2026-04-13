@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useCallback, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
-import { useReactFlow } from '@xyflow/react';
 import { MaterialIcon } from '../ui/MaterialIcon';
 import { LiveConnectionToggle } from '../ui/LiveConnectionToggle';
 import { HistoryPopup } from '../ui/HistoryPopup';
@@ -11,14 +11,15 @@ import {
   workflowLastUpdatedAtom,
   isSidebarOpenAtom,
   tenantNameAtom,
+  persistedWorkflowIdAtom,
+  workflowSavingAtom,
+  workflowSaveErrorAtom,
 } from '../../store/workflowStore';
-import {
-  activeRunIdAtom,
-  runStatusAtom,
-  nodeExecutionFamily,
-  isLiveConnectionEnabledAtom,
-} from '../../store/executionStore';
-import { exportCanvasToDag } from '../../lib/canvas/dagExporter';
+import { runStatusAtom } from '../../store/executionStore';
+import { useWorkflowDebugger } from '../../hooks/useWorkflowDebugger';
+import { useWorkflowSync } from '../../hooks/useWorkflowSync';
+import { useWorkflowSave } from '../../hooks/useWorkflowSave';
+import { useWorkflowRun } from '../../hooks/useWorkflowRun';
 import { authClient } from '@/lib/auth/auth-client';
 import type { RunStatus } from '../../store/executionStore';
 
@@ -75,130 +76,31 @@ export const TopHeader = () => {
     fetchTenantName();
   }, [setTenantName]);
 
-  // Run state
   const runStatus = useAtomValue(runStatusAtom);
-  const setRunStatus = useSetAtom(runStatusAtom);
-  const setActiveRunId = useSetAtom(activeRunIdAtom);
-  const setLive = useSetAtom(isLiveConnectionEnabledAtom);
 
-  const [saving, setSaving] = useState(false);
-  const [running, setRunning] = useState(false);
+  const saving = useAtomValue(workflowSavingAtom);
+  const saveError = useAtomValue(workflowSaveErrorAtom);
 
-  const { getNodes, getEdges } = useReactFlow();
+  const workflowId = useAtomValue(persistedWorkflowIdAtom);
+  const { save } = useWorkflowSave();
+  const { run: runWorkflow, running } = useWorkflowRun(save);
 
-  // ── Helpers ──────────────────────────────────────────────────────────────
-
-  function getAuthToken(): string {
-    return typeof window !== 'undefined'
-      ? localStorage.getItem('better-auth.token') ?? ''
-      : '';
-  }
-
-  // Get or create a workflow ID (simplified: stored in localStorage for MVP)
-  function getWorkflowId(): string | null {
-    return typeof window !== 'undefined'
-      ? localStorage.getItem('workflow_id')
-      : null;
-  }
-
-  // ── Save version ──────────────────────────────────────────────────────────
+  const syncStatus = useWorkflowSync(workflowId);
+  const [showDebugger, setShowDebugger] = useState(false);
+  const debuggerData = useWorkflowDebugger();
 
   const handleSave = useCallback(async () => {
-    setSaving(true);
-    try {
-      const nodes = getNodes();
-      const edges = getEdges();
-      const definition = exportCanvasToDag(title, nodes, edges);
-      const token = getAuthToken();
-      const workflowId = getWorkflowId();
+    await save();
+  }, [save]);
 
-      let response: Response;
-      if (workflowId) {
-        response = await fetch(`/api/workflows/${workflowId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ name: title, definition }),
-        });
-      } else {
-        response = await fetch('/api/workflows', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ name: title, definition }),
-        });
-        const data = await response.json();
-        if (data.workflow?.id) {
-          localStorage.setItem('workflow_id', data.workflow.id);
-        }
-      }
-
-      if (!response.ok) throw new Error('Save failed');
-    } catch (err) {
-      console.error('[TopHeader] Save failed:', err);
-    } finally {
-      setSaving(false);
-    }
-  }, [title, getNodes, getEdges]);
-
-  // ── Run workflow ──────────────────────────────────────────────────────────
-
-  const handleRun = useCallback(async () => {
-    let workflowId = getWorkflowId();
-    if (!workflowId) {
-      // Auto-save first
-      await handleSave();
-      workflowId = getWorkflowId();
-    }
-    if (!workflowId) return;
-
-    setRunning(true);
-    setRunStatus('running');
-
-    try {
-      const token = getAuthToken();
-      const res = await fetch(`/api/workflows/${workflowId}/run`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const { runId, error } = await res.json();
-      if (!res.ok || !runId) throw new Error(error ?? 'Run failed');
-
-      setActiveRunId(runId);
-      setLive(true);
-
-      // Connect WebSocket
-      const wsUrl = `${window.location.origin.replace('http', 'ws')}/api/ws/runs/${runId}?token=${token}`;
-      const ws = new WebSocket(wsUrl);
-
-      ws.onmessage = (evt) => {
-        try {
-          const msg = JSON.parse(evt.data);
-
-          if (msg.type === 'snapshot') {
-            // Snapshot handled by LogDrawer; don't update atoms here to avoid flash
-          } else if (msg.type === 'step') {
-            // Update is handled by page.tsx nodeExecutionFamily setters
-            // Dispatch a custom browser event so page.tsx can pick it up
-            window.dispatchEvent(new CustomEvent('dag:step', { detail: msg }));
-          } else if (msg.type === 'complete') {
-            setRunStatus(msg.status === 'SUCCESS' ? 'success' : 'failed');
-            setLive(false);
-            ws.close();
-            setRunning(false);
-          }
-        } catch {}
-      };
-
-      ws.onerror = () => {
-        setRunStatus('failed');
-        setRunning(false);
-        setLive(false);
-      };
-    } catch (err) {
-      console.error('[TopHeader] Run failed:', err);
-      setRunStatus('failed');
-      setRunning(false);
-    }
-  }, [handleSave, setRunStatus, setActiveRunId, setLive]);
+  useEffect(() => {
+    if (!showDebugger) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowDebugger(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showDebugger]);
 
   // ── Render ─ten─n─Name─────────────────────────────────────────────────────────
 
@@ -228,15 +130,23 @@ export const TopHeader = () => {
           </div>
           {showHistory && <HistoryPopup onClose={() => setShowHistory(false)} />}
         </div>
-
-        <div className="hidden md:flex gap-6 ml-4">
-          <a className="text-stone-500 hover:text-stone-800 transition-colors text-sm font-semibold" href="#">Workflows</a>
-          <a className="text-stone-500 hover:text-stone-800 transition-colors text-sm" href="#">Executions</a>
-          <a className="text-stone-500 hover:text-stone-800 transition-colors text-sm" href="#">Settings</a>
-        </div>
       </div>
 
       <div className="flex items-center gap-3">
+        {/* Sync Status */}
+        {syncStatus === 'syncing' && <span className="text-xs font-semibold text-stone-500 animate-pulse">Syncing...</span>}
+        {syncStatus === 'synced' && <span className="text-xs font-semibold text-emerald-600">Synced</span>}
+        {syncStatus === 'error' && <span className="text-xs font-semibold text-red-600">Sync Error</span>}
+
+        {/* Debug JSON */}
+        <button
+          onClick={() => setShowDebugger(true)}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 text-sm font-semibold transition-all shadow-sm"
+        >
+          <MaterialIcon icon="bug_report" className="text-base" />
+          Debug JSON
+        </button>
+
         {/* Run status badge */}
         {runStatus !== 'idle' && (
           <span className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${STATUS_STYLES[runStatus]}`}>
@@ -247,20 +157,27 @@ export const TopHeader = () => {
         <LiveConnectionToggle />
 
         {/* Save Version */}
-        <button
-          id="save-workflow-btn"
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 text-sm font-semibold transition-all disabled:opacity-50 shadow-sm"
-        >
-          <MaterialIcon icon="save" className="text-base" />
-          {saving ? 'Saving…' : 'Save'}
-        </button>
+        <div className="flex flex-col items-end gap-0.5">
+          <button
+            id="save-workflow-btn"
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 text-sm font-semibold transition-all disabled:opacity-50 shadow-sm"
+          >
+            <MaterialIcon icon="save" className="text-base" />
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+          {saveError && (
+            <span className="text-[10px] font-semibold text-red-600 max-w-[14rem] text-right leading-tight" title={saveError}>
+              {saveError}
+            </span>
+          )}
+        </div>
 
         {/* Run Workflow */}
         <button
           id="run-workflow-btn"
-          onClick={handleRun}
+          onClick={() => void runWorkflow()}
           disabled={running}
           className="flex items-center gap-1.5 bg-gradient-to-br from-blue-700 to-blue-500 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm hover:scale-[0.98] active:scale-95 transition-transform disabled:opacity-60"
         >
@@ -282,6 +199,71 @@ export const TopHeader = () => {
           ET
         </div>
       </div>
+
+      {/* Portal: escape sticky header stacking so overlay is viewport-centered */}
+      {showDebugger &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="debug-json-title"
+          >
+            <button
+              type="button"
+              className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm"
+              aria-label="Close debug panel"
+              onClick={() => setShowDebugger(false)}
+            />
+            <div
+              className="relative z-10 flex w-full max-w-4xl max-h-[min(90vh,56rem)] min-h-0 flex-col overflow-hidden rounded-[1.5rem] border border-[#afb3ac]/20 bg-[#fafaf5] shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex shrink-0 items-center justify-between border-b border-[#afb3ac]/15 bg-[#f3f4ee] px-6 py-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#e0e4dc] text-[#3a6095]">
+                    <MaterialIcon icon="bug_report" className="text-lg" />
+                  </div>
+                  <h2 id="debug-json-title" className="font-['Manrope'] text-[16px] font-bold text-[#2f342e]">
+                    Debug JSON
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowDebugger(false)}
+                  className="px-4 py-2 text-[13px] font-bold text-[#afb3ac] transition-colors hover:text-[#2f342e]"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#2f342e] p-6">
+                <div className="mb-4 shrink-0">
+                  {debuggerData.isValid ? (
+                    <span className="rounded-lg border border-emerald-500/30 bg-emerald-500/20 px-3 py-1.5 text-xs font-bold text-emerald-400">
+                      Valid DAG
+                    </span>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <span className="self-start rounded-lg border border-red-500/30 bg-red-500/20 px-3 py-1.5 text-xs font-bold text-red-400">
+                        Invalid DAG
+                      </span>
+                      <ul className="list-disc pl-4 text-xs text-red-400">
+                        {debuggerData.errors.map((err, i) => (
+                          <li key={i}>{err}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+                <pre className="min-h-0 flex-1 overflow-auto font-mono text-[13px] leading-[1.6] text-[#fafaf5]">
+                  {debuggerData.json}
+                </pre>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </header>
   );
 };

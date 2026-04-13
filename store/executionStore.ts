@@ -1,5 +1,5 @@
 import { atom } from 'jotai';
-import { atomFamily } from 'jotai/utils';
+import { atomFamily, atomWithStorage } from 'jotai/utils';
 
 export type ExecutionStatus = 'running' | 'success' | 'failed' | 'idle' | 'retrying';
 
@@ -27,7 +27,7 @@ export const defaultNodeState: DAGExecutionPayload = {
  * Each node only re-renders when its own atom is updated.
  */
 export const nodeExecutionFamily = atomFamily((id: string) =>
-  atom<DAGExecutionPayload>({ ...defaultNodeState, nodeId: id })
+  atomWithStorage<DAGExecutionPayload>(`node-exec-${id}`, { ...defaultNodeState, nodeId: id })
 );
 
 /** Whether a live WebSocket run stream is connected */
