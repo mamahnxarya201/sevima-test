@@ -1,20 +1,20 @@
 import { atom } from 'jotai';
 import { atomFamily } from 'jotai/utils';
 
-export type ExecutionStatus = 'running' | 'success' | 'failed' | 'idle';
+export type ExecutionStatus = 'running' | 'success' | 'failed' | 'idle' | 'retrying';
 
 /**
  * Strict TypeScript contract for inbound WebSocket DAG payloads.
- * By enforcing this interface, the backend engine can reliably stream partial or complete
- * node updates to the visualization layer.
+ * Driven by real step:update events from the execution engine.
  */
 export interface DAGExecutionPayload {
   nodeId: string;
   status: ExecutionStatus;
-  logs?: string[];
+  logs?: string;
   error?: string;
-  progress?: number; // Optional 0 to 100 for granular node task visualization
-  isLoading?: boolean; // For initial skeleton phase before DAG initializes
+  progress?: number;
+  isLoading?: boolean;
+  outputs?: Record<string, unknown>;
 }
 
 export const defaultNodeState: DAGExecutionPayload = {
@@ -23,14 +23,19 @@ export const defaultNodeState: DAGExecutionPayload = {
 };
 
 /**
- * Jotai atomFamily ensures high-performance O(1) subscriptions.
- * A specific node simply mounts `const [state] = useAtom(nodeExecutionFamily('node_xyz'))`
- * and ONLY re-renders when this specific atom receives an update (e.g. from the WebSocket).
+ * Jotai atomFamily — O(1) per-node subscriptions.
+ * Each node only re-renders when its own atom is updated.
  */
-export const nodeExecutionFamily = atomFamily((id: string) => 
+export const nodeExecutionFamily = atomFamily((id: string) =>
   atom<DAGExecutionPayload>({ ...defaultNodeState, nodeId: id })
 );
 
-// We can also have an overarching selector if we ever need to calculate total workflow % complete
-
+/** Whether a live WebSocket run stream is connected */
 export const isLiveConnectionEnabledAtom = atom(false);
+
+/** The active run ID being streamed */
+export const activeRunIdAtom = atom<string | null>(null);
+
+/** Overall run status for the header badge */
+export type RunStatus = 'idle' | 'running' | 'success' | 'failed';
+export const runStatusAtom = atom<RunStatus>('idle');
