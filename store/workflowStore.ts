@@ -26,8 +26,6 @@ export const persistedWorkflowIdAtom = atomWithStorage<string | null>(
   workflowIdStorage
 );
 
-export const isSidebarOpenAtom = atom(true);
-
 export const workflowTitleAtom = atomWithStorage<string>("workflowTitle", "Building Silver Jet Rocket");
 export const workflowLastUpdatedAtom = atom("2 mins ago");
 

@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import Link from 'next/link';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { MaterialIcon } from '../ui/MaterialIcon';
 import { LiveConnectionToggle } from '../ui/LiveConnectionToggle';
@@ -9,7 +10,6 @@ import { HistoryPopup } from '../ui/HistoryPopup';
 import {
   workflowTitleAtom,
   workflowLastUpdatedAtom,
-  isSidebarOpenAtom,
   tenantNameAtom,
   persistedWorkflowIdAtom,
   workflowSavingAtom,
@@ -44,7 +44,6 @@ const STATUS_LABELS: Record<RunStatus, string> = {
 export const TopHeader = () => {
   const [title, setTitle] = useAtom(workflowTitleAtom);
   const [lastUpdated] = useAtom(workflowLastUpdatedAtom);
-  const [isSidebarOpen, setIsSidebarOpen] = useAtom(isSidebarOpenAtom);
   const [showHistory, setShowHistory] = useState(false);
   const tenantName = useAtomValue(tenantNameAtom);
   const setTenantName = useSetAtom(tenantNameAtom);
@@ -107,13 +106,13 @@ export const TopHeader = () => {
   return (
     <header className="w-full sticky top-0 z-50 flex justify-between items-center px-6 py-3 bg-stone-50/80 backdrop-blur-md shadow-sm border-b border-stone-200/50">
       <div className="flex items-center gap-6">
-        <button
-          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-          className={`p-1.5 rounded-lg transition-colors flex items-center justify-center ${isSidebarOpen ? 'text-stone-500 hover:bg-stone-200' : 'bg-stone-200 text-stone-800 shadow-sm'}`}
-          title="Toggle Sidebar"
+        <Link
+          href="/workflows"
+          className="p-1.5 rounded-xl flex items-center justify-center text-[#3a6095] hover:bg-[#e0e4dc]/80 transition-colors"
+          title="Back to workflows"
         >
-          <MaterialIcon icon={isSidebarOpen ? 'menu_open' : 'menu'} />
-        </button>
+          <MaterialIcon icon="arrow_back" />
+        </Link>
 
         <div className="relative flex flex-col justify-center">
           <input
@@ -179,7 +178,7 @@ export const TopHeader = () => {
           id="run-workflow-btn"
           onClick={() => void runWorkflow()}
           disabled={running}
-          className="flex items-center gap-1.5 bg-gradient-to-br from-blue-700 to-blue-500 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm hover:scale-[0.98] active:scale-95 transition-transform disabled:opacity-60"
+          className="flex items-center gap-1.5 bg-[#3a6095] text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors hover:bg-[#2c4c77] active:bg-[#264060] disabled:opacity-60"
         >
           <MaterialIcon icon={running ? 'sync' : 'play_arrow'} className={`text-base ${running ? 'animate-spin' : ''}`} />
           {running ? 'Running…' : 'Run Workflow'}
@@ -195,7 +194,7 @@ export const TopHeader = () => {
           </button>
         </div>
 
-        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-stone-400 to-stone-300 ring-2 ring-stone-200 shadow-sm flex items-center justify-center text-white text-xs font-bold">
+        <div className="w-8 h-8 rounded-full bg-[#e0e4dc] ring-2 ring-[#afb3ac]/20 shadow-sm flex items-center justify-center text-[#3a6095] text-xs font-bold">
           ET
         </div>
       </div>
