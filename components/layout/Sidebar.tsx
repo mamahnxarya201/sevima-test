@@ -1,12 +1,42 @@
 'use client';
 
-import React from 'react';
-import { useAtomValue } from 'jotai';
+import React, { useEffect } from 'react';
+import { useAtomValue, useSetAtom } from 'jotai';
 import { MaterialIcon } from '../ui/MaterialIcon';
-import { isSidebarOpenAtom } from '../../store/workflowStore';
+import { isSidebarOpenAtom, tenantNameAtom } from '../../store/workflowStore';
+import { authClient } from '@/lib/auth/auth-client';
 
 export const Sidebar = () => {
   const isOpen = useAtomValue(isSidebarOpenAtom);
+  const tenantName = useAtomValue(tenantNameAtom);
+  const setTenantName = useSetAtom(tenantNameAtom);
+
+  useEffect(() => {
+    async function fetchTenantName() {
+      try {
+        const { data: tokenData } = await authClient.token();
+        const token = tokenData?.token;
+
+        if (!token) {
+          setTenantName('FlowForge');
+          return;
+        }
+
+        const res = await fetch('/api/tenants', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (data.tenant?.name) {
+          setTenantName(data.tenant.name);
+        }
+      } catch (err) {
+        console.error('[Sidebar] Failed to fetch tenant name:', err);
+        setTenantName('FlowForge');
+      }
+    }
+
+    fetchTenantName();
+  }, [setTenantName]);
 
   return (
     <aside 
@@ -20,8 +50,7 @@ export const Sidebar = () => {
         <MaterialIcon icon="account_tree" className="text-white text-lg" />
       </div>
       <div>
-        <h1 className="font-bold text-stone-900 font-sans leading-tight">FlowForge</h1>
-        <p className="text-[11px] uppercase tracking-wider text-stone-500">Tenant Name</p>
+        <h1 className="font-bold text-stone-900 font-sans leading-tight">{tenantName}</h1>
       </div>
     </div>
     
