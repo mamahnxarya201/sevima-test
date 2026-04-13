@@ -1,4 +1,5 @@
 import type { DagSchema } from '@/lib/dag/types';
+import type { WorkflowEditorState } from '@/lib/canvas/editorState';
 
 export type SaveWorkflowResult =
   | { ok: true; workflowId: string }
@@ -6,7 +7,10 @@ export type SaveWorkflowResult =
 
 export type SaveWorkflowParams = {
   name: string;
+  description?: string | null;
   definition: DagSchema;
+  /** Serialized React Flow state for layout restore */
+  editorState: WorkflowEditorState;
   /** Current id from persisted storage, or null to create */
   workflowId: string | null;
   token: string;
@@ -17,14 +21,14 @@ export type SaveWorkflowParams = {
  * Auth: Bearer token from Better Auth JWT.
  */
 export async function saveWorkflowToApi(params: SaveWorkflowParams): Promise<SaveWorkflowResult> {
-  const { name, definition, workflowId, token } = params;
+  const { name, description, definition, editorState, workflowId, token } = params;
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`,
   };
-  const body = JSON.stringify({ name, definition });
 
   if (workflowId) {
+    const body = JSON.stringify({ name, description, definition, editorState });
     const response = await fetch(`/api/workflows/${workflowId}`, {
       method: 'PATCH',
       headers,
@@ -40,7 +44,12 @@ export async function saveWorkflowToApi(params: SaveWorkflowParams): Promise<Sav
   const response = await fetch('/api/workflows', {
     method: 'POST',
     headers,
-    body,
+    body: JSON.stringify({
+      name,
+      description: description ?? undefined,
+      definition,
+      editorState,
+    }),
   });
 
   let data: { workflow?: { id?: string }; error?: string } = {};

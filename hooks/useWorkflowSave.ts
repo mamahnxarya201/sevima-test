@@ -10,6 +10,7 @@ import {
   workflowSaveErrorAtom,
 } from '../store/workflowStore';
 import { exportCanvasToDag } from '../lib/canvas/dagExporter';
+import { serializeEditorState } from '../lib/canvas/editorState';
 import { authClient } from '@/lib/auth/auth-client';
 import { saveWorkflowToApi } from '../lib/workflow/saveWorkflow';
 
@@ -32,12 +33,14 @@ export function useWorkflowSave() {
     setSaveError(null);
     try {
       const definition = exportCanvasToDag(title, getNodes(), getEdges());
+      const editorState = serializeEditorState(getNodes(), getEdges());
       const { data: tokenData } = await authClient.token();
       const token = tokenData?.token ?? '';
 
       const result = await saveWorkflowToApi({
         name: title,
         definition,
+        editorState,
         workflowId,
         token,
       });
