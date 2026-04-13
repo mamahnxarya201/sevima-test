@@ -60,7 +60,7 @@ const ScriptEditorModal = ({
             </button>
             <button 
               onClick={() => { onSave(code); onClose(); }} 
-              className="px-5 py-2 bg-gradient-to-br from-[#3a6095] to-[#4a70a5] hover:from-[#2c4c77] hover:to-[#3a6095] text-white rounded-xl text-[13px] font-bold shadow-sm transition-all"
+              className="px-5 py-2 bg-[#3a6095] hover:bg-[#2c4c77] active:bg-[#264060] text-white rounded-xl text-[13px] font-bold shadow-sm transition-colors"
             >
               Save Changes
             </button>

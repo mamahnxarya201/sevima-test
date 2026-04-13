@@ -85,7 +85,7 @@ export default function RegisterPage() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-700 to-blue-400 flex items-center justify-center shrink-0">
+            <div className="w-10 h-10 rounded-lg bg-[#3a6095] flex items-center justify-center shrink-0">
               <MaterialIcon icon="account_tree" className="text-white text-xl" />
             </div>
           </div>

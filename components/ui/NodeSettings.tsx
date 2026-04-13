@@ -90,7 +90,7 @@ export const NodeSettings = ({ nodeId, nodeType, onClose }: { nodeId: string, no
 
         {/* Action Buttons */}
         <div className="flex flex-col gap-3 mt-8 shrink-0 w-full">
-          <button className="w-full py-3.5 bg-gradient-to-br from-[#3a6095] to-[#4a70a5] hover:from-[#2c4c77] hover:to-[#3a6095] text-white rounded-[1rem] text-[13px] font-bold shadow-md transition-all flex items-center justify-center gap-2">
+          <button className="w-full py-3.5 bg-[#3a6095] hover:bg-[#2c4c77] active:bg-[#264060] text-white rounded-[1rem] text-[13px] font-bold shadow-md transition-colors flex items-center justify-center gap-2">
             <MaterialIcon icon="save" className="text-[16px]" />
             Save Node
           </button>
