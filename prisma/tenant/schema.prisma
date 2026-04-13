@@ -36,8 +36,11 @@ model WorkflowVersion {
   id            String @id @default(uuid())
   versionNumber Int
 
-  /// DAG JSON: { "workflowName": "...", "nodes": [...], "edges": [...] }
+  /// DAG JSON: { "workflowName": "...", "nodes": [...], "edges": [...] } — may be {} for drafts
   definition Json
+
+  /// React Flow snapshot: { nodes, edges } with positions (editor-only; not used by execution engine)
+  editorState Json?
 
   workflowId String
   workflow   Workflow      @relation(fields: [workflowId], references: [id])
