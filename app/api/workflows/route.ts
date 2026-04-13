@@ -1,26 +1,43 @@
 /**
  * app/api/workflows/route.ts
  *
- * GET  /api/workflows  — List all workflows for the calling tenant
- * POST /api/workflows  — Create a new workflow with version 1
- *
- * All routes require Authorization: Bearer <jwt>
+ * GET  /api/workflows  — List workflows (tenant-wide); ?search=&sort=name|updated
+ * POST /api/workflows  — Create workflow + v1; definition defaults to {} (draft, no validateDag)
  */
 import { NextRequest } from 'next/server';
 import { resolveTenantContext, authErrorResponse } from '@/lib/auth/tenantGuard';
 import { validateDag } from '@/lib/dag/validator';
+import { isEmptyDraftDefinition } from '@/lib/canvas/dagImporter';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
-    const { userId, tenantDb } = await resolveTenantContext(request);
+    const { tenantDb } = await resolveTenantContext(request);
+    const { searchParams } = new URL(request.url);
+    const q = searchParams.get('search')?.trim() ?? '';
+    const sort = searchParams.get('sort') ?? 'updated';
+
+    const where =
+      q.length > 0
+        ? {
+            OR: [
+              { name: { contains: q, mode: 'insensitive' as const } },
+              { description: { contains: q, mode: 'insensitive' as const } },
+            ],
+          }
+        : {};
+
+    const orderBy =
+      sort === 'name'
+        ? { name: 'asc' as const }
+        : { updatedAt: 'desc' as const };
 
     const workflows = await tenantDb.workflow.findMany({
-      where: { ownerId: userId },
-      orderBy: { updatedAt: 'desc' },
+      where,
+      orderBy,
       include: {
-        _count: { select: { versions: true, } },
+        _count: { select: { versions: true } },
       },
     });
 
@@ -35,32 +52,37 @@ export async function POST(request: NextRequest) {
     const { userId, tenantDb } = await resolveTenantContext(request);
     const body = await request.json();
 
-    const { name, description, definition } = body as {
+    const { name, description, definition, editorState } = body as {
       name: string;
       description?: string;
-      definition: unknown;
+      definition?: unknown;
+      editorState?: unknown;
     };
 
-    if (!name || !definition) {
-      return Response.json({ error: 'name and definition are required' }, { status: 400 });
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return Response.json({ error: 'name is required' }, { status: 400 });
     }
 
-    // Validate DAG before saving
-    const validation = validateDag(definition);
-    if (!validation.valid) {
-      return Response.json({ error: 'Invalid DAG', details: validation.errors }, { status: 422 });
+    const def = definition !== undefined ? definition : {};
+
+    if (!isEmptyDraftDefinition(def)) {
+      const validation = validateDag(def);
+      if (!validation.valid) {
+        return Response.json({ error: 'Invalid DAG', details: validation.errors }, { status: 422 });
+      }
     }
 
     const workflow = await tenantDb.workflow.create({
       data: {
-        name,
-        description,
+        name: name.trim(),
+        description: description?.trim() || null,
         ownerId: userId,
         activeVersion: 1,
         versions: {
           create: {
             versionNumber: 1,
-            definition: definition as any,
+            definition: def as object,
+            ...(editorState !== undefined ? { editorState: editorState as object } : {}),
           },
         },
       },
