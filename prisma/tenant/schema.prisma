@@ -23,6 +23,9 @@ model Workflow {
   /// User ID from management DB (decoupled — no FK across DBs)
   ownerId String
 
+  /// Execution settings JSON (WorkflowSettings): retries, timeout, failure tolerance
+  settings Json?
+
   activeVersion Int               @default(1)
   versions      WorkflowVersion[]
 
@@ -70,7 +73,11 @@ model WorkflowRun {
   /// Duration in milliseconds
   duration  Int?
 
+  /// Set when the run fails before/during execution (validation, engine throw, timeout summary)
+  errorMessage String?
+
   @@index([status, startedAt(sort: Desc)])
+  @@index([workflowVersionId, startedAt(sort: Desc), id(sort: Desc)])
   @@index([triggeredById])
 }
 
