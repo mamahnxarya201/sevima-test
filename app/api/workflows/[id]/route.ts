@@ -124,18 +124,21 @@ export async function PATCH(
 
     const latest = workflow.versions[0];
 
-    if (body.name !== undefined || body.description !== undefined) {
+    const workflowUpdate: Record<string, unknown> = {};
+    if (body.name !== undefined) workflowUpdate.name = body.name;
+    if (body.description !== undefined) {
+      workflowUpdate.description =
+        typeof body.description === 'string'
+          ? body.description.trim() || null
+          : body.description;
+    }
+    if (body.settings !== undefined) {
+      workflowUpdate.settings = body.settings;
+    }
+    if (Object.keys(workflowUpdate).length > 0) {
       await ctx.tenantDb.workflow.update({
         where: { id },
-        data: {
-          ...(body.name !== undefined && { name: body.name }),
-          ...(body.description !== undefined && {
-            description:
-              typeof body.description === 'string'
-                ? body.description.trim() || null
-                : body.description,
-          }),
-        },
+        data: workflowUpdate,
       });
     }
 
@@ -205,6 +208,57 @@ export async function PATCH(
     });
 
     return Response.json({ workflow: updated });
+  } catch (err) {
+    return apiErrorResponse(err);
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id: rawId } = await params;
+    const id = workflowIdParamSchema.parse(rawId);
+    const ctx = await resolveTenantContext(request);
+    requireEditorOrAbove(ctx.role);
+    const cfg = rateLimitConfig();
+    enforceRateLimit(`workflows:delete:${ctx.userId}`, cfg.mutationMax, cfg.windowMs);
+
+    const exists = await ctx.tenantDb.workflow.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!exists) {
+      return Response.json({ error: 'Workflow not found' }, { status: 404 });
+    }
+
+    await ctx.tenantDb.$transaction(async (tx) => {
+      const versionRows = await tx.workflowVersion.findMany({
+        where: { workflowId: id },
+        select: { id: true },
+      });
+      const versionIds = versionRows.map((v) => v.id);
+
+      if (versionIds.length > 0) {
+        const runRows = await tx.workflowRun.findMany({
+          where: { workflowVersionId: { in: versionIds } },
+          select: { id: true },
+        });
+        const runIds = runRows.map((r) => r.id);
+
+        if (runIds.length > 0) {
+          await tx.stepRun.deleteMany({ where: { runId: { in: runIds } } });
+          await tx.workflowRun.deleteMany({ where: { id: { in: runIds } } });
+        }
+
+        await tx.workflowVersion.deleteMany({ where: { id: { in: versionIds } } });
+      }
+
+      await tx.workflow.delete({ where: { id } });
+    });
+
+    return Response.json({ ok: true });
   } catch (err) {
     return apiErrorResponse(err);
   }
