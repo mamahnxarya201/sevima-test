@@ -53,6 +53,7 @@ export async function GET(
           startedAt: true,
           endedAt: true,
           duration: true,
+          errorMessage: true,
           workflowVersion: { select: { versionNumber: true } },
           stepRuns: {
             orderBy: { startedAt: 'asc' },
