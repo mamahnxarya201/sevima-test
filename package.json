@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "prepare": "next-ws",
+    "prepare": "next-ws patch",
     "migrate:tenants": "tsx scripts/migrate-tenants.ts"
   },
   "dependencies": {

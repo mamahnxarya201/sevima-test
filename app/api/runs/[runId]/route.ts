@@ -5,7 +5,9 @@
  * Used for the initial REST snapshot on page load, before WebSocket takes over.
  */
 import { NextRequest } from 'next/server';
-import { resolveTenantContext, authErrorResponse } from '@/lib/auth/tenantGuard';
+import { resolveTenantContext, apiErrorResponse } from '@/lib/auth/tenantGuard';
+import { runIdParamSchema } from '@/lib/api/schemas/workflow';
+import { enforceRateLimit, rateLimitConfig } from '@/lib/rateLimit/memory';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,10 +16,13 @@ export async function GET(
   { params }: { params: Promise<{ runId: string }> }
 ) {
   try {
-    const { runId } = await params;
-    const { tenantDb } = await resolveTenantContext(request);
+    const { runId: rawRunId } = await params;
+    const runId = runIdParamSchema.parse(rawRunId);
+    const ctx = await resolveTenantContext(request);
+    const cfg = rateLimitConfig();
+    enforceRateLimit(`runs:get:${ctx.userId}`, cfg.max, cfg.windowMs);
 
-    const run = await tenantDb.workflowRun.findUnique({
+    const run = await ctx.tenantDb.workflowRun.findUnique({
       where: { id: runId },
       include: {
         stepRuns: {
@@ -35,6 +40,6 @@ export async function GET(
 
     return Response.json({ run });
   } catch (err) {
-    return authErrorResponse(err);
+    return apiErrorResponse(err);
   }
 }

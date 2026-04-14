@@ -12,6 +12,10 @@ import { managementDb } from '../prisma/management';
 import { getTenantDb } from '../prisma/tenant';
 import type { NextRequest } from 'next/server';
 import type { PrismaClient } from '../generated/tenant-client';
+import { AuthError } from './errors';
+import { normalizeRole, type AppRole } from './rbac';
+
+export { AuthError } from './errors';
 
 const BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3000';
 const JWKS = createRemoteJWKSet(new URL(`${BETTER_AUTH_URL}/api/auth/jwks`));
@@ -19,15 +23,8 @@ const JWKS = createRemoteJWKSet(new URL(`${BETTER_AUTH_URL}/api/auth/jwks`));
 export interface TenantContext {
   userId: string;
   tenantId: string;
-  role: string;
+  role: AppRole;
   tenantDb: PrismaClient;
-}
-
-export class AuthError extends Error {
-  constructor(message: string, public status: number = 401) {
-    super(message);
-    this.name = 'AuthError';
-  }
 }
 
 export async function resolveTenantContext(request: NextRequest): Promise<TenantContext> {
@@ -44,7 +41,6 @@ export async function resolveTenantContext(request: NextRequest): Promise<Tenant
       issuer: BETTER_AUTH_URL,
       audience: BETTER_AUTH_URL,
     });
-    console.log('p', p);
     payload = p as Record<string, unknown>;
   } catch (err) {
     throw new AuthError('Invalid or expired JWT: ' + err, 401);
@@ -52,7 +48,7 @@ export async function resolveTenantContext(request: NextRequest): Promise<Tenant
 
   const userId = payload['id'] as string;
   const tenantId = payload['tenantId'] as string;
-  const role = (payload['role'] as string) ?? 'VIEWER';
+  const role = normalizeRole(payload['role'] as string | undefined);
 
   if (!tenantId) {
     throw new AuthError('JWT missing tenantId claim', 403);
@@ -77,15 +73,4 @@ export async function resolveTenantContext(request: NextRequest): Promise<Tenant
   return { userId, tenantId, role, tenantDb };
 }
 
-/** Helper to return a standard 401/403 Response from a caught AuthError */
-export function authErrorResponse(err: unknown): Response {
-  if (err instanceof AuthError) {
-    return Response.json({ error: err.message }, { status: err.status });
-  }
-  console.error('[authErrorResponse] Unexpected error (not AuthError):', err);
-  const details =
-    process.env.NODE_ENV === 'development' && err instanceof Error
-      ? { details: err.message }
-      : {};
-  return Response.json({ error: 'Internal server error', ...details }, { status: 500 });
-}
+export { apiErrorResponse, authErrorResponse } from '@/lib/api/respond';

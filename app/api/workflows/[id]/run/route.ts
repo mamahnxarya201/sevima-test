@@ -7,9 +7,10 @@
  * Execution happens asynchronously — subscribe to /api/ws/runs/:runId for live updates.
  */
 import { NextRequest } from 'next/server';
-import { resolveTenantContext, authErrorResponse } from '@/lib/auth/tenantGuard';
-import { runWorkflow } from '@/lib/orchestrator/executionEngine';
-import type { DagSchema } from '@/lib/dag/types';
+import { resolveTenantContext, apiErrorResponse } from '@/lib/auth/tenantGuard';
+import { requireEditorOrAbove } from '@/lib/auth/rbac';
+import { workflowIdParamSchema } from '@/lib/api/schemas/workflow';
+import { enforceRateLimit, rateLimitConfig } from '@/lib/rateLimit/memory';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,11 +19,14 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await params;
-    const { userId, tenantDb } = await resolveTenantContext(request);
+    const { id: rawId } = await params;
+    const id = workflowIdParamSchema.parse(rawId);
+    const ctx = await resolveTenantContext(request);
+    requireEditorOrAbove(ctx.role);
+    const cfg = rateLimitConfig();
+    enforceRateLimit(`workflows:run:${ctx.userId}`, cfg.mutationMax, cfg.windowMs);
 
-    // Load active workflow version
-    const workflow = await tenantDb.workflow.findUnique({
+    const workflow = await ctx.tenantDb.workflow.findUnique({
       where: { id },
       include: {
         versions: {
@@ -42,23 +46,17 @@ export async function POST(
       return Response.json({ error: 'No versions found for this workflow' }, { status: 400 });
     }
 
-    // Create the run record
-    const run = await tenantDb.workflowRun.create({
+    const run = await ctx.tenantDb.workflowRun.create({
       data: {
         workflowVersionId: activeVersionRecord.id,
-        triggeredById: userId,
+        triggeredById: ctx.userId,
         status: 'PENDING',
       },
     });
 
-    // Fire and forget — execution runs async while we return immediately
-    const definition = activeVersionRecord.definition as unknown as DagSchema;
-    runWorkflow(run.id, definition, tenantDb).catch((err) => {
-      console.error(`[run/${run.id}] Unhandled execution error:`, err);
-    });
-
+    /** Execution starts when client connects to `/api/ws/runs/:runId` (see ws route). */
     return Response.json({ runId: run.id }, { status: 202 });
   } catch (err) {
-    return authErrorResponse(err);
+    return apiErrorResponse(err);
   }
 }
