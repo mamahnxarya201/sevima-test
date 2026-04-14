@@ -26,6 +26,9 @@ export interface StepResult {
 // Default images per runtime / node type
 // ─────────────────────────────────────────────
 
+/** Official curl static binary image — Alpine base images do not ship curl by default. */
+const HTTP_CALL_IMAGE = 'curlimages/curl:8.11.1';
+
 const RUNTIME_IMAGES: Record<string, string> = {
   python: 'python:3.11-slim',
   node: 'node:20-alpine',
@@ -34,75 +37,93 @@ const RUNTIME_IMAGES: Record<string, string> = {
 
 function resolveImage(node: DagNode): string {
   if (node.image) return node.image;
-  if (node.type === 'HTTP_CALL') return 'alpine:3.19'; // curl is available in alpine
+  if (node.type === 'HTTP_CALL') return HTTP_CALL_IMAGE;
   if (node.type === 'SCRIPT_EXECUTION' && node.runtime) return RUNTIME_IMAGES[node.runtime];
-  if (node.type === 'DELAY' || node.type === 'CONDITION') return 'alpine:3.19';
+  if (node.type === 'DELAY') return 'alpine:3.19';
+  if (node.type === 'CONDITION') return 'node:20-alpine';
   return 'alpine:3.19';
 }
 
 // ─────────────────────────────────────────────
-// HTTP_CALL → curl command builder
+// HTTP_CALL → curl argv (no shell)
 // ─────────────────────────────────────────────
+//
+// Curl exit 3 = "URL malformed". Common causes: missing scheme (https://), empty url,
+// or a broken shell line. We pass argv directly to `curl` (image ENTRYPOINT) so
+// quoting never mangles the URL or body.
 
-function buildCurlCommand(http: HttpConfig): string {
-  const parts: string[] = ['curl', '-s', '-w', '\\n{"__statusCode__": %{http_code}}'];
+function normalizeHttpUrl(raw: string): string {
+  const t = raw.trim();
+  if (!t) {
+    throw new Error(
+      'HTTP_CALL: url is empty. Curl uses exit code 3 when the URL is missing or malformed.'
+    );
+  }
+  if (/^https?:\/\//i.test(t)) {
+    return t;
+  }
+  // Bare host/path — curl requires a scheme or it fails with exit 3
+  return `https://${t}`;
+}
 
+/**
+ * Arguments for `curl` only (Dockerfile ENTRYPOINT is `curl` on curlimages/curl).
+ */
+function buildCurlCmdArgs(http: HttpConfig): string[] {
   const method = http.method ?? 'GET';
-  parts.push('-X', method);
 
-  // Headers
-  if (http.headers) {
-    for (const [key, value] of Object.entries(http.headers)) {
-      parts.push('-H', `"${key}: ${value}"`);
-    }
-  }
-
-  // Auto Content-Type for body
-  if (http.body && !http.headers?.['Content-Type'] && !http.headers?.['content-type']) {
-    parts.push('-H', '"Content-Type: application/json"');
-  }
-
-  // Bearer token
-  if (http.bearerToken) {
-    parts.push('-H', `"Authorization: Bearer ${http.bearerToken}"`);
-  }
-
-  // Basic auth
-  if (http.basicAuth) {
-    parts.push('-u', `"${http.basicAuth}"`);
-  }
-
-  // Cookies
-  if (http.cookies) {
-    parts.push('--cookie', `"${http.cookies}"`);
-  }
-
-  // Body
-  if (http.body) {
-    const bodyStr = typeof http.body === 'string' ? http.body : JSON.stringify(http.body);
-    parts.push('--data-raw', `'${bodyStr}'`);
-  }
-
-  // Timeout
-  const timeout = http.timeoutSeconds ?? 30;
-  parts.push('--max-time', String(timeout));
-
-  // Follow redirects
-  if (http.followRedirects !== false) {
-    parts.push('-L');
-  }
-
-  // Query params
-  let url = http.url;
+  let url = normalizeHttpUrl(http.url);
   if (http.queryParams && Object.keys(http.queryParams).length > 0) {
     const qs = new URLSearchParams(http.queryParams).toString();
     url += (url.includes('?') ? '&' : '?') + qs;
   }
 
-  parts.push(`"${url}"`);
+  const args: string[] = [
+    '-s',
+    '-S', // show errors on stderr (helps debug vs silent -s alone)
+    '-w',
+    '\n{"__statusCode__": %{http_code}}',
+    '-X',
+    method,
+  ];
 
-  // Wrap in sh -c so curl can handle the string with quotes
-  return `sh -c '${parts.join(' ')}'`;
+  if (http.headers) {
+    for (const [key, value] of Object.entries(http.headers)) {
+      if (!key) continue;
+      args.push('-H', `${key}: ${value}`);
+    }
+  }
+
+  if (http.body && !http.headers?.['Content-Type'] && !http.headers?.['content-type']) {
+    args.push('-H', 'Content-Type: application/json');
+  }
+
+  if (http.bearerToken) {
+    args.push('-H', `Authorization: Bearer ${http.bearerToken}`);
+  }
+
+  if (http.basicAuth) {
+    args.push('-u', http.basicAuth);
+  }
+
+  if (http.cookies) {
+    args.push('--cookie', http.cookies);
+  }
+
+  if (http.body) {
+    const bodyStr = typeof http.body === 'string' ? http.body : JSON.stringify(http.body);
+    args.push('--data-raw', bodyStr);
+  }
+
+  const timeout = http.timeoutSeconds ?? 30;
+  args.push('--max-time', String(timeout));
+
+  if (http.followRedirects !== false) {
+    args.push('-L');
+  }
+
+  args.push(url);
+  return args;
 }
 
 // ─────────────────────────────────────────────
@@ -149,18 +170,55 @@ async function collectLogs(container: Dockerode.Container): Promise<string> {
 // Main: run a single DAG node in Docker
 // ─────────────────────────────────────────────
 
-export async function runNode(node: DagNode, env: string[]): Promise<StepResult> {
+const NODE_INPUT_PRELUDE =
+  "const input = JSON.parse(process.env.DAG_MERGED_INPUT_JSON || '{}');\n";
+const PYTHON_INPUT_PRELUDE =
+  'import os, json\ninput = json.loads(os.environ.get("DAG_MERGED_INPUT_JSON") or "{}")\n';
+
+export async function runNode(
+  node: DagNode,
+  env: string[],
+  options?: { mergedInput?: Record<string, unknown> }
+): Promise<StepResult> {
   const image = resolveImage(node);
 
-  // Build the command array
+  const containerEnv = [...env];
+  if (
+    options?.mergedInput !== undefined &&
+    (node.type === 'SCRIPT_EXECUTION' || node.type === 'CONDITION')
+  ) {
+    containerEnv.push(`DAG_MERGED_INPUT_JSON=${JSON.stringify(options.mergedInput)}`);
+  }
+
+  // HTTP_CALL: `curlimages/curl` ENTRYPOINT is `curl` — Cmd is only curl flags + URL (no shell).
   let cmd: string[];
+  let entrypoint: string[] | undefined;
   if (node.type === 'HTTP_CALL' && node.http) {
-    cmd = ['sh', '-c', buildCurlCommand(node.http)];
+    try {
+      cmd = buildCurlCmdArgs(node.http);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        exitCode: 3,
+        logs: `[HTTP_CALL] ${msg}\n`,
+        durationMs: 0,
+      };
+    }
   } else {
-    const script = node.script ?? 'echo "no script defined"';
+    let script = node.script ?? 'echo "no script defined"';
+    const injectInput =
+      options?.mergedInput !== undefined &&
+      (node.type === 'SCRIPT_EXECUTION' || node.type === 'CONDITION');
+
     if (node.type === 'SCRIPT_EXECUTION' && node.runtime === 'python') {
+      if (injectInput) {
+        script = PYTHON_INPUT_PRELUDE + script;
+      }
       cmd = ['python3', '-c', script];
-    } else if (node.type === 'SCRIPT_EXECUTION' && node.runtime === 'node') {
+    } else if ((node.type === 'SCRIPT_EXECUTION' && node.runtime === 'node') || node.type === 'CONDITION') {
+      if (injectInput) {
+        script = NODE_INPUT_PRELUDE + script;
+      }
       cmd = ['node', '-e', script];
     } else {
       cmd = ['sh', '-c', script];
@@ -189,8 +247,9 @@ export async function runNode(node: DagNode, env: string[]): Promise<StepResult>
 
   const container = await docker.createContainer({
     Image: image,
+    ...(entrypoint !== undefined ? { Entrypoint: entrypoint } : {}),
     Cmd: cmd,
-    Env: env,
+    Env: containerEnv,
     AttachStdout: true,
     AttachStderr: true,
     HostConfig: {

@@ -13,7 +13,8 @@
 
 import pLimit from 'p-limit';
 import { validateDag } from '../dag/validator';
-import { resolveInputs, parseNodeOutputs } from '../dag/ioResolver';
+import { resolveInputs, parseNodeOutputs, parseHttpCallOutputs } from '../dag/ioResolver';
+import { mergeUpstreamOutputs, interpolateDagNode } from '../dag/inputInterpolation';
 import { runNode } from './dockerRunner';
 import { emitStepEvent, emitRunComplete } from '../socket/eventBus';
 import type { DagSchema, DagNode, RunContext } from '../dag/types';
@@ -29,7 +30,8 @@ function sleep(ms: number): Promise<void> {
 async function runNodeWithRetry(
   runId: string,
   node: DagNode,
-  env: string[],
+  edges: DagSchema['edges'],
+  runContext: RunContext,
   tenantDb: PrismaClient
 ): Promise<Record<string, unknown>> {
   const maxAttempts = (node.retries ?? 0) + 1;
@@ -46,8 +48,20 @@ async function runNodeWithRetry(
 
     emitStepEvent({ runId, stepId: node.id, status });
 
-    const result = await runNode(node, env);
-    const outputs = parseNodeOutputs(result.logs, node.outputs);
+    const mergedInput = mergeUpstreamOutputs(node.id, edges, runContext);
+    const nodeRuntime = interpolateDagNode(node, mergedInput);
+    const env = resolveInputs(node.inputs, runContext);
+
+    const result = await runNode(nodeRuntime, env, { mergedInput });
+    let outputs: Record<string, unknown>;
+
+    if (node.type === 'DELAY') {
+      outputs = mergedInput;
+    } else if (node.type === 'HTTP_CALL') {
+      outputs = parseHttpCallOutputs(result.logs, node.outputs);
+    } else {
+      outputs = parseNodeOutputs(result.logs, node.outputs);
+    }
 
     if (result.exitCode === 0) {
       await tenantDb.stepRun.updateMany({
@@ -66,12 +80,13 @@ async function runNodeWithRetry(
         status: 'SUCCESS',
         logs: result.logs,
         outputs,
+        durationMs: result.durationMs,
       });
 
       return outputs;
     }
 
-    // Failed attempt
+    // Failed attempt — keep `logs` as raw container output (stdout/stderr)
     const isLastAttempt = attempt === maxAttempts - 1;
     if (isLastAttempt) {
       await tenantDb.stepRun.updateMany({
@@ -90,6 +105,7 @@ async function runNodeWithRetry(
         status: 'FAILED',
         logs: result.logs,
         error: `Exit code ${result.exitCode}`,
+        durationMs: result.durationMs,
       });
 
       throw new Error(`Node "${node.id}" failed after ${maxAttempts} attempt(s). Exit code: ${result.exitCode}`);
@@ -178,8 +194,7 @@ export async function runWorkflow(
               return;
             }
 
-            const env = resolveInputs(node.inputs, runContext);
-            const outputs = await runNodeWithRetry(runId, node, env, tenantDb);
+            const outputs = await runNodeWithRetry(runId, node, definition.edges, runContext, tenantDb);
             runContext[node.id] = outputs;
 
             // If CONDITION: figure out which downstream branch to skip
