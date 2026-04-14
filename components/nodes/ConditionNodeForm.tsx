@@ -26,7 +26,8 @@ export const ConditionNodeForm = ({ nodeId }: { nodeId: string }) => {
     <div className="flex w-full flex-col gap-5">
       <p className="text-[12px] leading-relaxed text-[#afb3ac]">
         Branching uses <code className="rounded bg-[#edefe8] px-1 text-[#2f342e]">result</code> in JSON
-        printed to stdout. Edit the script below.
+        printed to stdout. Upstream outputs are merged into <code className="rounded bg-[#edefe8] px-1 text-[#2f342e]">input</code>:
+        use <code className="rounded bg-[#edefe8] px-1 text-[#2f342e]">input.&lt;node_id&gt;.statusCode</code> (match the upstream node id) or flat <code className="rounded bg-[#edefe8] px-1 text-[#2f342e]">input.statusCode</code> when there is a single feeder.
       </p>
       <div className="flex w-full flex-col gap-2">
         <span className="text-[10px] font-bold uppercase tracking-wider text-[#afb3ac]">Condition script</span>
