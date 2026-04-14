@@ -11,7 +11,7 @@
 import { PrismaClient } from '../generated/management-client';
 
 declare global {
-  // eslint-disable-next-line no-var
+   
   var __management_prisma: PrismaClient | undefined;
 }
 

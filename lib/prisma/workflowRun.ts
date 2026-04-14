@@ -35,7 +35,7 @@ export async function updateStepStatus(tenantUrl: string, stepId: string, runId:
   const tenantDb = getTenantDb(tenantUrl);
   
   // Find existing step run or create it
-  let stepRun = await tenantDb.stepRun.findFirst({
+  const stepRun = await tenantDb.stepRun.findFirst({
     where: { stepId, runId },
   });
 
