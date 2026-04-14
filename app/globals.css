@@ -1,5 +1,34 @@
 @import "tailwindcss";
 
+/* Canvas nodes: “light up” — opacity + blue glow while RUNNING / RETRYING */
+@keyframes node-running-active {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow:
+      0 0 14px 4px rgba(59, 130, 246, 0.38),
+      0 0 28px 8px rgba(147, 197, 253, 0.22);
+  }
+  50% {
+    opacity: 0.74;
+    box-shadow:
+      0 0 26px 12px rgba(59, 130, 246, 0.52),
+      0 0 44px 16px rgba(147, 197, 253, 0.32);
+  }
+}
+
+.node-running-active {
+  animation: node-running-active 1.12s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .node-running-active {
+    animation: none;
+    opacity: 1;
+    box-shadow: 0 0 18px 5px rgba(59, 130, 246, 0.4);
+  }
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;

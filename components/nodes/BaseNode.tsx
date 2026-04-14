@@ -51,13 +51,15 @@ export const BaseNode = ({
   const [execState] = useAtom(nodeExecutionFamily(nodeId));
   const { status, error, isLoading } = execState;
 
+  const isRunning = status === 'running' || status === 'retrying';
+
   // Status logic
   let ringClass = selected ? 'ring-2 ring-blue-600 shadow-md shadow-blue-200/50 z-10' : `${baseRingClass} z-0`;
   let finalHeaderClass = headerColorClass;
   let finalIconBgClass = iconBgClass;
   let finalHeaderTextClass = headerTextClass;
   let finalTopBarClass = topBarClass;
-  
+
   if (status === 'failed') {
     ringClass = selected ? 'ring-2 ring-red-600 shadow-md shadow-red-200/50 z-10' : 'ring-[1.5px] ring-red-300 shadow-sm hover:ring-red-400 z-0';
     finalHeaderClass = 'bg-[#ebebe6]';
@@ -69,8 +71,10 @@ export const BaseNode = ({
     finalHeaderClass = 'bg-emerald-50/50';
     finalIconBgClass = 'bg-emerald-100 text-emerald-700';
     if (topBarClass) finalTopBarClass = 'bg-emerald-400';
-  } else if (status === 'running') {
-    ringClass = selected ? 'ring-2 ring-blue-600 shadow-md shadow-blue-200/50 z-10' : 'ring-[1.5px] ring-blue-300 shadow-sm shadow-blue-100 animate-pulse z-0';
+  } else if (isRunning) {
+    ringClass = selected
+      ? 'ring-2 ring-blue-500 shadow-lg shadow-blue-300/70 z-10'
+      : 'ring-2 ring-blue-400 shadow-md shadow-blue-200/80 z-0';
   }
 
   // Blur/Loading state
@@ -97,9 +101,20 @@ export const BaseNode = ({
     );
   }
 
+  const runningMotionClass = isRunning ? 'node-running-active' : '';
+
   return (
-    <div className={`relative ${width} bg-white rounded-2xl overflow-hidden transition-all duration-300 group ${ringClass}`}>
+    <div
+      className={`relative ${width} bg-white rounded-2xl overflow-hidden transition-all duration-300 group ${ringClass} ${runningMotionClass}`}
+    >
       {handles}
+
+      {isRunning && (
+        <div
+          className="pointer-events-none absolute inset-0 rounded-2xl ring-2 ring-inset ring-blue-400/40 motion-safe:animate-pulse motion-reduce:animate-none"
+          aria-hidden
+        />
+      )}
 
       {topBarClass && <div className={`h-1 transition-colors ${finalTopBarClass}`}></div>}
       
@@ -120,8 +135,15 @@ export const BaseNode = ({
           <h3 className="text-sm font-semibold text-stone-800 leading-tight mb-0.5">{title}</h3>
           <p className="text-xs text-stone-500 leading-tight">{description}</p>
         </div>
-        {hasSpinner && (
-          <div className={`w-5 h-5 rounded-full border-2 border-stone-300 border-t-stone-600 animate-spin transition-opacity ${status === 'running' ? 'opacity-100' : 'opacity-0 hidden group-hover:block group-hover:opacity-100'}`}></div>
+        {(hasSpinner || isRunning) && (
+          <div
+            className={`w-5 h-5 shrink-0 rounded-full border-2 animate-spin transition-opacity ${
+              isRunning
+                ? 'border-blue-200 border-t-blue-600 opacity-100'
+                : 'border-stone-300 border-t-stone-600 opacity-0 hidden group-hover:block group-hover:opacity-100'
+            }`}
+            aria-hidden={!isRunning}
+          />
         )}
       </div>
 

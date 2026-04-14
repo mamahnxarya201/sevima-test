@@ -1,0 +1,63 @@
+services:
+  orchestrator-node:
+    image: node:20-alpine
+    container_name: orchestrator_node
+    restart: unless-stopped
+    volumes:
+      - .:/app:z
+      # Faster dependency I/O; install runs only when package.json/lock changes (see entrypoint)
+      - orchestrator_node_modules:/app/node_modules:z
+      # Isolate Turbopack/Next output from host `.next` (host `npm run dev` uses repo dir; container uses this volume)
+      - orchestrator_next:/app/.next:z
+      # Persist npm cache so reinstalls after volume wipes don't re-fetch the whole registry
+      - orchestrator_npm_cache:/npm-cache:z
+      - ${DOCKER_HOST_PATH:-/run/user/1000/podman/podman.sock}:/var/run/docker.sock:z
+    working_dir: /app
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      # Large Next.js trees; avoids rare OOM during npm lifecycle scripts
+      - NODE_OPTIONS=--max-old-space-size=4096
+      - NPM_CONFIG_CACHE=/npm-cache
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      # Use internal docker hostname "db" inside the container
+      - MANAGEMENT_DATABASE_URL=postgresql://${DB_USER:-user}:${DB_PASSWORD:-password}@db:5432/${DB_NAME:-management_db}
+      - DATABASE_URL=postgresql://${DB_USER:-user}:${DB_PASSWORD:-password}@db:5432/${DB_NAME:-management_db}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:3000}
+    security_opt:
+      - label:disable
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["sh", "/app/scripts/docker-orchestrator-entrypoint.sh"]
+
+  db:
+    image: postgres:15-alpine
+    container_name: postgres_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_DB: ${DB_NAME:-management_db}
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data:z
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-user} -d ${DB_NAME:-management_db}']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+    driver: local
+  orchestrator_node_modules:
+    driver: local
+  orchestrator_next:
+    driver: local
+  orchestrator_npm_cache:
+    driver: local

@@ -1,0 +1,107 @@
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../../lib/generated/tenant-client"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  /// Used only by `prisma migrate deploy --schema prisma/tenant/schema.prisma`.
+  /// At runtime, URL is overridden per-request via PrismaClient({ datasources }).
+  url      = env("TENANT_DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// WORKFLOW DEFINITION
+// ─────────────────────────────────────────────
+
+model Workflow {
+  id          String @id @default(uuid())
+  name        String
+  description String?
+
+  /// User ID from management DB (decoupled — no FK across DBs)
+  ownerId String
+
+  activeVersion Int               @default(1)
+  versions      WorkflowVersion[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId])
+}
+
+model WorkflowVersion {
+  id            String @id @default(uuid())
+  versionNumber Int
+
+  /// DAG JSON: { "workflowName": "...", "nodes": [...], "edges": [...] } — may be {} for drafts
+  definition Json
+
+  /// React Flow snapshot: { nodes, edges } with positions (editor-only; not used by execution engine)
+  editorState Json?
+
+  workflowId String
+  workflow   Workflow      @relation(fields: [workflowId], references: [id])
+  runs       WorkflowRun[]
+
+  @@unique([workflowId, versionNumber])
+}
+
+// ─────────────────────────────────────────────
+// EXECUTION ENGINE
+// ─────────────────────────────────────────────
+
+model WorkflowRun {
+  id     String    @id @default(uuid())
+  status RunStatus @default(PENDING)
+
+  workflowVersionId String
+  workflowVersion   WorkflowVersion @relation(fields: [workflowVersionId], references: [id])
+
+  /// ID of the user who triggered the run (from management DB — decoupled)
+  triggeredById String?
+
+  stepRuns StepRun[]
+
+  startedAt DateTime?
+  endedAt   DateTime?
+  /// Duration in milliseconds
+  duration  Int?
+
+  @@index([status, startedAt(sort: Desc)])
+  @@index([triggeredById])
+}
+
+model StepRun {
+  id String @id @default(uuid())
+
+  /// Node ID from the DAG JSON (e.g. "fetch_data")
+  stepId String
+
+  runId String
+  run   WorkflowRun @relation(fields: [runId], references: [id])
+
+  status       RunStatus @default(PENDING)
+  attempts     Int       @default(0)
+  logs         String?
+  errorMessage String?
+
+  /// Captured JSON outputs from container stdout (last line)
+  outputs Json?
+
+  startedAt DateTime?
+  endedAt   DateTime?
+
+  @@index([runId])
+}
+
+enum RunStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  RETRYING
+  TIMEOUT
+}

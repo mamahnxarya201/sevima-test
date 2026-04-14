@@ -6,16 +6,31 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "prepare": "next-ws patch",
+    "migrate:tenants": "tsx scripts/migrate-tenants.ts"
   },
   "dependencies": {
+    "@prisma/client": "~6.4.1",
     "@types/dagre": "^0.7.54",
+    "@types/dockerode": "^4.0.1",
+    "@types/pg": "^8.20.0",
+    "@types/ws": "^8.18.1",
     "@xyflow/react": "^12.10.2",
+    "better-auth": "^1.6.2",
     "dagre": "^0.8.5",
+    "dockerode": "^4.0.10",
     "jotai": "^2.19.1",
     "next": "16.2.3",
+    "next-ws": "^2.2.4",
+    "p-limit": "^7.3.0",
+    "pg": "^8.20.0",
+    "prisma": "~6.4.1",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "tsx": "^4.21.0",
+    "ws": "^8.20.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
