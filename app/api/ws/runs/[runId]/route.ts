@@ -19,8 +19,13 @@ import { jwtVerify, createRemoteJWKSet } from 'jose';
 import { managementDb } from '@/lib/prisma/management';
 import { getTenantDb } from '@/lib/prisma/tenant';
 import { onStepEvent, onRunComplete } from '@/lib/socket/eventBus';
+import { runWorkflow } from '@/lib/orchestrator/executionEngine';
+import type { DagSchema } from '@/lib/dag/types';
 
 const BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3000';
+
+/** One engine start per run per process (reconnects only subscribe). */
+const engineStartedRunIds = new Set<string>();
 const JWKS = createRemoteJWKSet(new URL(`${BETTER_AUTH_URL}/api/auth/jwks`));
 
 export function GET() {
@@ -61,6 +66,28 @@ export async function SOCKET(
     return;
   }
   const tenantDb = getTenantDb(tenant.connectionUrl);
+
+  // ── Start engine once: first authenticated WS connection for a PENDING run ──
+  if (!engineStartedRunIds.has(runId)) {
+    engineStartedRunIds.add(runId);
+    try {
+      const run = await tenantDb.workflowRun.findUnique({
+        where: { id: runId },
+        include: {
+          workflowVersion: { select: { definition: true } },
+        },
+      });
+      if (run?.status === 'PENDING' && run.workflowVersion?.definition) {
+        const definition = run.workflowVersion.definition as unknown as DagSchema;
+        void runWorkflow(runId, definition, tenantDb).catch((err) => {
+          console.error(`[ws/run ${runId}] runWorkflow:`, err);
+        });
+      }
+    } catch (e) {
+      console.error('[ws/run] Failed to start workflow:', e);
+      engineStartedRunIds.delete(runId);
+    }
+  }
 
   // ── Send snapshot of current step states ─────────────────────────
   try {
