@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { MaterialIcon } from '../ui/MaterialIcon';
 import { HistoryPopup } from '../ui/HistoryPopup';
+import { WorkflowSettingsDialog } from '../ui/WorkflowSettingsDialog';
 import {
   workflowTitleAtom,
   workflowLastUpdatedAtom,
@@ -20,12 +21,18 @@ import {
   workflowPendingVersionLoadAtom,
   workflowViewingVersionAtom,
 } from '../../store/workflowStore';
-import { runStatusAtom, runStreamStatusAtom, type RunStreamStatus } from '../../store/executionStore';
+import {
+  runFailureDetailAtom,
+  runStatusAtom,
+  runStreamStatusAtom,
+  type RunStreamStatus,
+} from '../../store/executionStore';
 import { useWorkflowDebugger } from '../../hooks/useWorkflowDebugger';
 import { useWorkflowSave } from '../../hooks/useWorkflowSave';
 import { useWorkflowRun } from '../../hooks/useWorkflowRun';
 import { authClient } from '@/lib/auth/auth-client';
 import type { RunStatus } from '../../store/executionStore';
+import { useRolePermissions } from '@/hooks/useRolePermissions';
 
 // ─── Run status badge ──────────────────────────────────────────────────────
 
@@ -93,6 +100,7 @@ export const TopHeader = () => {
 
   const runStatus = useAtomValue(runStatusAtom);
   const runStreamStatus = useAtomValue(runStreamStatusAtom);
+  const runFailureDetail = useAtomValue(runFailureDetailAtom);
 
   const saving = useAtomValue(workflowSavingAtom);
   const saveError = useAtomValue(workflowSaveErrorAtom);
@@ -107,7 +115,9 @@ export const TopHeader = () => {
   const { run: runWorkflow } = useWorkflowRun(save);
 
   const runBusy = runStatus === 'running' || runStreamStatus === 'connecting';
+  const { canEdit, role } = useRolePermissions();
 
+  const [showSettings, setShowSettings] = useState(false);
   const [showDebugger, setShowDebugger] = useState(false);
   const debuggerData = useWorkflowDebugger();
 
@@ -158,7 +168,12 @@ export const TopHeader = () => {
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Untitled workflow"
-            className="text-xl font-bold tracking-tight text-stone-800 bg-transparent border-none outline-none hover:bg-stone-200/50 focus:bg-stone-200/50 px-2 py-0.5 rounded transition-all w-80"
+            readOnly={!canEdit}
+            className={`text-xl font-bold tracking-tight text-stone-800 bg-transparent border-none outline-none px-2 py-0.5 rounded transition-all w-80 ${
+              canEdit
+                ? 'hover:bg-stone-200/50 focus:bg-stone-200/50'
+                : 'opacity-80 cursor-default'
+            }`}
           />
           <button
             type="button"
@@ -205,6 +220,14 @@ export const TopHeader = () => {
       </div>
 
       <div className="flex items-center gap-3">
+        <span
+          className={`rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.08em] ${
+            canEdit ? 'bg-emerald-50 text-emerald-700' : 'bg-stone-200 text-stone-600'
+          }`}
+          title="Current access level for workflow actions"
+        >
+          {canEdit ? `${role.toLowerCase()} mode` : 'viewer mode'}
+        </span>
         {/* Run stream (WebSocket) + autosave hint */}
         <div className="flex flex-col items-end gap-0.5 mr-1">
           <span
@@ -234,16 +257,29 @@ export const TopHeader = () => {
           )}
         </div>
 
-        <button
-          type="button"
-          title="Save an immutable version snapshot (numbered). Edits still auto-save as draft on the latest version."
-          onClick={() => void checkpoint()}
-          disabled={checkpointing || saving || !persistedWorkflowId}
-          className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 text-sm font-semibold transition-all shadow-sm disabled:opacity-50 disabled:pointer-events-none"
-        >
-          <MaterialIcon icon="bookmark_add" className={`text-base ${checkpointing ? 'animate-pulse' : ''}`} />
-          Checkpoint
-        </button>
+        {canEdit && (
+          <button
+            type="button"
+            title="Save an immutable version snapshot (numbered). Edits still auto-save as draft on the latest version."
+            onClick={() => void checkpoint()}
+            disabled={checkpointing || saving || !persistedWorkflowId}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 text-sm font-semibold transition-all shadow-sm disabled:opacity-50 disabled:pointer-events-none"
+          >
+            <MaterialIcon icon="bookmark_add" className={`text-base ${checkpointing ? 'animate-pulse' : ''}`} />
+            Checkpoint
+          </button>
+        )}
+
+        {/* Workflow Settings */}
+        {canEdit && (
+          <button
+            onClick={() => setShowSettings(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 text-sm font-semibold transition-all shadow-sm"
+          >
+            <MaterialIcon icon="tune" className="text-base" />
+            Settings
+          </button>
+        )}
 
         {/* Debug JSON */}
         <button
@@ -256,21 +292,33 @@ export const TopHeader = () => {
 
         {/* Run status badge */}
         {runStatus !== 'idle' && (
-          <span className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${STATUS_STYLES[runStatus]}`}>
-            {STATUS_LABELS[runStatus]}
-          </span>
+          <div className="flex max-w-[min(24rem,40vw)] flex-col items-end gap-1">
+            <span className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${STATUS_STYLES[runStatus]}`}>
+              {STATUS_LABELS[runStatus]}
+            </span>
+            {runStatus === 'failed' && runFailureDetail && (
+              <p
+                className="max-h-24 overflow-y-auto rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-left text-[10px] font-medium leading-snug text-red-900"
+                title={runFailureDetail}
+              >
+                {runFailureDetail}
+              </p>
+            )}
+          </div>
         )}
 
         {/* Run Workflow */}
-        <button
-          id="run-workflow-btn"
-          onClick={() => void runWorkflow()}
-          disabled={runBusy}
-          className="flex items-center gap-1.5 bg-[#3a6095] text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors hover:bg-[#2c4c77] active:bg-[#264060] disabled:opacity-60"
-        >
-          <MaterialIcon icon={runBusy ? 'sync' : 'play_arrow'} className={`text-base ${runBusy ? 'animate-spin' : ''}`} />
-          {runBusy ? 'Starting…' : 'Run Workflow'}
-        </button>
+        {canEdit && (
+          <button
+            id="run-workflow-btn"
+            onClick={() => void runWorkflow()}
+            disabled={runBusy}
+            className="flex items-center gap-1.5 bg-[#3a6095] text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors hover:bg-[#2c4c77] active:bg-[#264060] disabled:opacity-60"
+          >
+            <MaterialIcon icon={runBusy ? 'sync' : 'play_arrow'} className={`text-base ${runBusy ? 'animate-spin' : ''}`} />
+            {runBusy ? 'Starting…' : 'Run Workflow'}
+          </button>
+        )}
 
         <div className="flex items-center gap-2 pl-2 border-l border-stone-200">
           <button className="p-2 text-stone-500 hover:text-stone-800 transition-colors">
@@ -351,6 +399,12 @@ export const TopHeader = () => {
           </div>,
           document.body
         )}
+
+      <WorkflowSettingsDialog
+        open={showSettings}
+        onClose={() => setShowSettings(false)}
+        canEdit={canEdit}
+      />
     </header>
   );
 };
