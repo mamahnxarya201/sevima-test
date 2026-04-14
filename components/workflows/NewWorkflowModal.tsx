@@ -49,7 +49,11 @@ export function NewWorkflowModal({ open, onClose, onCreated }: NewWorkflowModalP
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(typeof data.error === 'string' ? data.error : 'Could not create workflow');
+        if (res.status === 403) {
+          setError('You do not have permission to create workflows.');
+        } else {
+          setError(typeof data.error === 'string' ? data.error : 'Could not create workflow');
+        }
         setSubmitting(false);
         return;
       }

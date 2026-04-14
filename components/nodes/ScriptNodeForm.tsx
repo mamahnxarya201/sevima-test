@@ -1,22 +1,33 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { useAtom } from 'jotai';
+import { nodesAtom } from '@/store/workflowStore';
+import type { ScriptRuntime } from '@/lib/dag/types';
 import { MaterialIcon } from '../ui/MaterialIcon';
 
-const ScriptEditorModal = ({ 
-  isOpen, 
-  onClose, 
-  initialCode, 
-  onSave 
-}: { 
-  isOpen: boolean; 
-  onClose: () => void; 
-  initialCode: string; 
+const DEFAULT_SCRIPT = `console.log(JSON.stringify({ ok: true }));`;
+
+const ScriptEditorModal = ({
+  isOpen,
+  onClose,
+  initialCode,
+  onSave,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  initialCode: string;
   onSave: (code: string) => void;
 }) => {
   const [code, setCode] = useState(initialCode);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setCode(initialCode);
+    }
+  }, [isOpen, initialCode]);
 
   const handleScroll = () => {
     if (textareaRef.current && lineNumbersRef.current) {
@@ -45,31 +56,44 @@ const ScriptEditorModal = ({
   const lines = Array.from({ length: Math.max(lineCount, 10) }, (_, i) => i + 1);
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-stone-900/30 backdrop-blur-sm p-8 animate-in fade-in duration-200">
-      <div className="bg-[#fafaf5] w-full max-w-4xl h-[80vh] rounded-[1.5rem] shadow-2xl flex flex-col overflow-hidden border border-[#afb3ac]/20 animate-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between px-6 py-4 bg-[#f3f4ee] border-b border-[#afb3ac]/15">
+    <div className="fixed inset-0 z-[100] flex animate-in items-center justify-center bg-stone-900/30 p-8 backdrop-blur-sm fade-in duration-200">
+      <div className="flex h-[80vh] w-full max-w-4xl animate-in flex-col overflow-hidden rounded-[1.5rem] border border-[#afb3ac]/20 bg-[#fafaf5] shadow-2xl zoom-in-95 duration-200">
+        <div className="flex shrink-0 items-center justify-between border-b border-[#afb3ac]/15 bg-[#f3f4ee] px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-[#e0e4dc] flex items-center justify-center text-[#3a6095]">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#e0e4dc] text-[#3a6095]">
               <MaterialIcon icon="terminal" className="text-lg" />
             </div>
-            <h2 className="text-[16px] font-bold text-[#2f342e] font-['Manrope']">Edit Script</h2>
+            <h2 className="font-['Manrope'] text-[16px] font-bold text-[#2f342e]">Edit Script</h2>
           </div>
           <div className="flex items-center gap-3">
-            <button onClick={onClose} className="px-4 py-2 text-[13px] font-bold text-[#afb3ac] hover:text-[#2f342e] transition-colors">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-[13px] font-bold text-[#afb3ac] transition-colors hover:text-[#2f342e]"
+            >
               Cancel
             </button>
-            <button 
-              onClick={() => { onSave(code); onClose(); }} 
-              className="px-5 py-2 bg-[#3a6095] hover:bg-[#2c4c77] active:bg-[#264060] text-white rounded-xl text-[13px] font-bold shadow-sm transition-colors"
+            <button
+              type="button"
+              onClick={() => {
+                onSave(code);
+                onClose();
+              }}
+              className="rounded-xl bg-[#3a6095] px-5 py-2 text-[13px] font-bold text-white shadow-sm transition-colors hover:bg-[#2c4c77] active:bg-[#264060]"
             >
               Save Changes
             </button>
           </div>
         </div>
 
-        <div className="flex-1 flex bg-[#2f342e] overflow-hidden relative">
-          <div ref={lineNumbersRef} className="w-12 flex-shrink-0 bg-[#252924] text-[#afb3ac]/50 font-mono text-[13px] leading-[1.6] py-6 text-right pr-3 overflow-hidden select-none">
-            {lines.map(line => <div key={line}>{line}</div>)}
+        <div className="relative flex flex-1 overflow-hidden bg-[#2f342e]">
+          <div
+            ref={lineNumbersRef}
+            className="w-12 flex-shrink-0 select-none overflow-hidden bg-[#252924] py-6 pr-3 text-right font-mono text-[13px] leading-[1.6] text-[#afb3ac]/50"
+          >
+            {lines.map((line) => (
+              <div key={line}>{line}</div>
+            ))}
           </div>
           <textarea
             ref={textareaRef}
@@ -78,7 +102,7 @@ const ScriptEditorModal = ({
             onScroll={handleScroll}
             onKeyDown={handleKeyDown}
             spellCheck={false}
-            className="flex-1 bg-transparent text-[#fafaf5] font-mono text-[13px] leading-[1.6] p-6 resize-none outline-none whitespace-pre"
+            className="flex-1 resize-none whitespace-pre bg-transparent p-6 font-mono text-[13px] leading-[1.6] text-[#fafaf5] outline-none"
           />
         </div>
       </div>
@@ -86,41 +110,74 @@ const ScriptEditorModal = ({
   );
 };
 
-export const ScriptNodeForm = () => {
+export const ScriptNodeForm = ({ nodeId }: { nodeId: string }) => {
+  const [nodes, setNodes] = useAtom(nodesAtom);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [scriptCode, setScriptCode] = useState(
-    "export default async (data) => {\n  const mapped = data.items;\n  return mapped.filter(i => i.val > 0);\n};"
+
+  const node = nodes.find((n) => n.id === nodeId);
+  const data = (node?.data ?? {}) as Record<string, unknown>;
+  const scriptCode = (data.script as string) || DEFAULT_SCRIPT;
+  const runtime = ((data.runtime as ScriptRuntime) || 'node') as ScriptRuntime;
+
+  const patchData = useCallback(
+    (patch: Record<string, unknown>) => {
+      setNodes((nds) =>
+        nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n))
+      );
+    },
+    [nodeId, setNodes]
   );
 
   return (
     <>
-      <div className="flex flex-col gap-2 w-full">
+      <div className="flex w-full flex-col gap-3">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-[#afb3ac]">Runtime</span>
+        <select
+          value={runtime}
+          onChange={(e) => patchData({ runtime: e.target.value as ScriptRuntime })}
+          className="w-full cursor-pointer rounded-xl border-none bg-[#f3f4ee] px-4 py-3 text-[13px] font-bold text-[#2f342e] outline-none focus:ring-2 focus:ring-[#3a6095]"
+        >
+          <option value="node">Node</option>
+          <option value="python">Python</option>
+          <option value="sh">Shell</option>
+        </select>
+      </div>
+
+      <p className="text-[11px] leading-relaxed text-[#2f342e]/75">
+        Reference upstream fields in the script as text templates:{' '}
+        <code className="rounded bg-[#edefe8] px-1 font-mono text-[10px] text-[#3a6095]">input.statusCode</code>,{' '}
+        <code className="rounded bg-[#edefe8] px-1 font-mono text-[10px] text-[#3a6095]">input.body</code> (substituted before run).
+      </p>
+
+      <div className="flex w-full flex-col gap-2">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] font-bold text-[#afb3ac] tracking-wider uppercase">Script Content</span>
-          <button 
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[#afb3ac]">Script Content</span>
+          <button
+            type="button"
             onClick={() => setIsModalOpen(true)}
-            className="text-[10px] font-bold text-[#3a6095] hover:text-[#2c4c77] tracking-wider uppercase flex items-center gap-1 transition-colors"
+            className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#3a6095] transition-colors hover:text-[#2c4c77]"
           >
             See more <MaterialIcon icon="open_in_new" className="text-[12px]" />
           </button>
         </div>
-        
-        <div 
+
+        <button
+          type="button"
           onClick={() => setIsModalOpen(true)}
-          className="w-full bg-[#2f342e] rounded-[1.25rem] p-4 font-mono text-[13px] leading-relaxed text-[#fafaf5] shadow-inner cursor-pointer hover:ring-2 hover:ring-[#3a6095]/50 transition-all relative overflow-hidden group"
+          className="group relative w-full cursor-pointer overflow-hidden rounded-[1.25rem] bg-[#2f342e] p-4 text-left font-mono text-[13px] leading-relaxed text-[#fafaf5] shadow-inner transition-all hover:ring-2 hover:ring-[#3a6095]/50"
         >
-          <div className="opacity-70 group-hover:opacity-100 transition-opacity whitespace-pre-wrap break-all line-clamp-4">
+          <div className="line-clamp-4 whitespace-pre-wrap break-all opacity-70 transition-opacity group-hover:opacity-100">
             {scriptCode}
           </div>
-          <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-[#2f342e] to-transparent"></div>
-        </div>
+          <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-[#2f342e] to-transparent" />
+        </button>
       </div>
 
-      <ScriptEditorModal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
+      <ScriptEditorModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
         initialCode={scriptCode}
-        onSave={(newCode) => setScriptCode(newCode)}
+        onSave={(newCode) => patchData({ script: newCode })}
       />
     </>
   );

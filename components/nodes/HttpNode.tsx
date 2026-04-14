@@ -12,8 +12,8 @@ export const HttpNode = ({ id, data, selected }: any) => {
       headerTitle="Action"
       iconName="cloud_sync"
       iconBgClass="bg-slate-100 text-slate-600"
-      title={data?.title || "Fetch User Data"}
-      description={data?.description || "GET request to Auth0"}
+      title={data?.title !== undefined ? data.title : "Fetch User Data"}
+      description={data?.description !== undefined ? data.description : "GET request to Auth0"}
       
       handles={
         <>

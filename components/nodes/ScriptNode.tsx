@@ -12,9 +12,8 @@ export const ScriptNode = ({ id, data, selected }: any) => {
       headerTitle="Compute"
       iconName="terminal"
       iconBgClass="bg-stone-100 text-stone-500"
-      title={data?.title || "Post-Process"}
-      description={data?.description || "Transforming payload..."}
-      hasSpinner={true}
+      title={data?.title !== undefined ? data.title : "Post-Process"}
+      description={data?.description !== undefined ? data.description : "Transforming payload..."}
       
       handles={
         <>

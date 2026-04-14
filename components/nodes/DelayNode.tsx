@@ -14,8 +14,8 @@ export const DelayNode = ({ id, data, selected }: any) => {
       topBarClass="bg-blue-600"
       iconName="timer"
       iconBgClass="bg-stone-100 text-stone-500"
-      title={data?.title || "Delay Execution"}
-      description={data?.description || "5 Minutes"}
+      title={data?.title !== undefined ? data.title : "Delay Execution"}
+      description={data?.description !== undefined ? data.description : "5 Minutes"}
       
       handles={
         <>

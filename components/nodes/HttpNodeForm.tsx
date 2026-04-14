@@ -1,38 +1,125 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { useAtom } from 'jotai';
+import { nodesAtom } from '@/store/workflowStore';
+import type { HttpConfig } from '@/lib/dag/types';
 import { MaterialIcon } from '../ui/MaterialIcon';
 
-export const HttpNodeForm = () => {
-  const [method, setMethod] = useState('GET');
-  const [url, setUrl] = useState('');
-  const [headers, setHeaders] = useState([
-    { id: '1', key: 'Authorization', value: 'Bearer token' }
-  ]);
-  const [body, setBody] = useState('');
+type HeaderRow = { id: string; key: string; value: string };
+
+function headersToRows(headers?: Record<string, string>): HeaderRow[] {
+  const e = Object.entries(headers ?? {});
+  if (e.length === 0) return [{ id: 'h0', key: '', value: '' }];
+  return e.map(([key, value], i) => ({ id: `h${i}`, key, value }));
+}
+
+function rowsToHeaders(rows: HeaderRow[]): Record<string, string> | undefined {
+  const o: Record<string, string> = {};
+  for (const r of rows) {
+    const k = r.key.trim();
+    if (k) o[k] = r.value;
+  }
+  return Object.keys(o).length ? o : undefined;
+}
+
+export const HttpNodeForm = ({ nodeId }: { nodeId: string }) => {
+  const [nodes, setNodes] = useAtom(nodesAtom);
+
+  const patchData = useCallback(
+    (patch: Record<string, unknown>) => {
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n
+        )
+      );
+    },
+    [nodeId, setNodes]
+  );
+
+  const http = useMemo(() => {
+    const n = nodes.find((x) => x.id === nodeId);
+    return ((n?.data as Record<string, unknown>)?.http ?? {}) as Partial<HttpConfig>;
+  }, [nodes, nodeId]);
+
+  const method = http.method ?? 'GET';
+  const url = http.url ?? '';
+  const body =
+    typeof http.body === 'string'
+      ? http.body
+      : http.body != null
+        ? JSON.stringify(http.body, null, 2)
+        : '';
+
+  const [headerRows, setHeaderRowsState] = useState<HeaderRow[]>(() => headersToRows(http.headers));
+
+  useEffect(() => {
+    setHeaderRowsState(headersToRows(http.headers));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodeId]);
+
+  const updateHttp = useCallback(
+    (next: Partial<HttpConfig>) => {
+      patchData({ http: { ...http, ...next } });
+    },
+    [http, patchData]
+  );
+
+  const updateHeadersInNode = useCallback(
+    (rows: HeaderRow[]) => {
+      const headers = rowsToHeaders(rows);
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== nodeId) return n;
+          const data = { ...(n.data as Record<string, unknown>) };
+          const httpPrev = { ...(data.http as Record<string, unknown>) };
+          if (headers === undefined) {
+            delete httpPrev.headers;
+          } else {
+            httpPrev.headers = headers;
+          }
+          data.http = httpPrev;
+          return { ...n, data };
+        })
+      );
+    },
+    [nodeId, setNodes]
+  );
 
   const addHeader = () => {
-    setHeaders([...headers, { id: Math.random().toString(36).substring(2, 9), key: '', value: '' }]);
+    const newRows = [...headerRows, { id: `h${Date.now()}`, key: '', value: '' }];
+    setHeaderRowsState(newRows);
+    updateHeadersInNode(newRows);
   };
 
   const removeHeader = (id: string) => {
-    setHeaders(headers.filter(h => h.id !== id));
+    const newRows = headerRows.filter((h) => h.id !== id);
+    setHeaderRowsState(newRows);
+    updateHeadersInNode(newRows);
   };
 
   const updateHeader = (id: string, field: 'key' | 'value', newValue: string) => {
-    setHeaders(headers.map(h => h.id === id ? { ...h, [field]: newValue } : h));
+    const newRows = headerRows.map((h) => (h.id === id ? { ...h, [field]: newValue } : h));
+    setHeaderRowsState(newRows);
+    updateHeadersInNode(newRows);
   };
 
   return (
-    <div className="flex flex-col gap-5 w-full">
-      <div className="flex flex-col gap-2 w-full">
-        <span className="text-[10px] font-bold text-[#afb3ac] tracking-wider uppercase">Method & URL</span>
-        <div className="flex gap-2 w-full">
+    <div className="flex w-full flex-col gap-5">
+      <p className="text-[11px] leading-relaxed text-[#2f342e]/75">
+        Use upstream data in URL, headers, or body:{' '}
+        <code className="rounded bg-[#edefe8] px-1 font-mono text-[10px] text-[#3a6095]">input.statusCode</code>,{' '}
+        <code className="rounded bg-[#edefe8] px-1 font-mono text-[10px] text-[#3a6095]">input.body</code>, etc. Values
+        merge from all nodes connected into this one.
+      </p>
+      <div className="flex w-full flex-col gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-[#afb3ac]">Method & URL</span>
+        <div className="flex w-full gap-2">
           <div className="relative shrink-0">
-            <select 
+            <select
               value={method}
-              onChange={(e) => setMethod(e.target.value)}
-              className="bg-[#f3f4ee] border-none outline-none text-[#2f342e] text-[13px] font-bold rounded-xl pl-4 pr-8 py-3 focus:ring-2 focus:ring-[#3a6095] w-24 appearance-none cursor-pointer"
+              onChange={(e) => updateHttp({ method: e.target.value as HttpConfig['method'] })}
+              className="w-24 cursor-pointer appearance-none rounded-xl border-none bg-[#f3f4ee] py-3 pl-4 pr-8 text-[13px] font-bold text-[#2f342e] outline-none focus:ring-2 focus:ring-[#3a6095]"
             >
               <option>GET</option>
               <option>POST</option>
@@ -40,65 +127,70 @@ export const HttpNodeForm = () => {
               <option>DELETE</option>
               <option>PATCH</option>
             </select>
-            <MaterialIcon 
-              icon="expand_more" 
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-[#2f342e] pointer-events-none text-[18px]" 
+            <MaterialIcon
+              icon="expand_more"
+              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[18px] text-[#2f342e]"
             />
           </div>
-          <input 
-            type="text" 
+          <input
+            type="text"
             value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://api.example.com/data" 
-            className="flex-1 min-w-0 bg-[#f3f4ee] border-none outline-none text-[#2f342e] text-[13px] rounded-xl px-4 py-3 focus:ring-2 focus:ring-[#3a6095]"
+            onChange={(e) => updateHttp({ url: e.target.value })}
+            placeholder="https://api.example.com/data"
+            className="min-w-0 flex-1 rounded-xl border-none bg-[#f3f4ee] px-4 py-3 text-[13px] text-[#2f342e] outline-none focus:ring-2 focus:ring-[#3a6095]"
           />
         </div>
       </div>
 
-      <div className="flex flex-col gap-2 w-full">
-        <span className="text-[10px] font-bold text-[#afb3ac] tracking-wider uppercase">Headers</span>
-        <div className="bg-[#f3f4ee] rounded-[1.25rem] p-3 flex flex-col gap-2 w-full">
-          {headers.map((header) => (
-            <div key={header.id} className="flex gap-2 w-full items-center">
-              <input 
-                type="text" 
-                placeholder="Key" 
+      <div className="flex w-full flex-col gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-[#afb3ac]">Headers</span>
+        <div className="flex w-full flex-col gap-2 rounded-[1.25rem] bg-[#f3f4ee] p-3">
+          {headerRows.map((header) => (
+            <div key={header.id} className="flex w-full items-center gap-2">
+              <input
+                type="text"
+                placeholder="Key"
                 value={header.key}
                 onChange={(e) => updateHeader(header.id, 'key', e.target.value)}
-                className="flex-1 min-w-0 bg-white border-none outline-none text-[#2f342e] text-[13px] rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-[#3a6095] shadow-sm" 
+                className="min-w-0 flex-1 rounded-xl border-none bg-white px-3 py-2.5 text-[13px] text-[#2f342e] shadow-sm outline-none focus:ring-2 focus:ring-[#3a6095]"
               />
-              <input 
-                type="text" 
-                placeholder="Value" 
+              <input
+                type="text"
+                placeholder="Value"
                 value={header.value}
                 onChange={(e) => updateHeader(header.id, 'value', e.target.value)}
-                className="flex-1 min-w-0 bg-white border-none outline-none text-[#2f342e] text-[13px] rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-[#3a6095] shadow-sm" 
+                className="min-w-0 flex-1 rounded-xl border-none bg-white px-3 py-2.5 text-[13px] text-[#2f342e] shadow-sm outline-none focus:ring-2 focus:ring-[#3a6095]"
               />
-              <button 
+              <button
+                type="button"
                 onClick={() => removeHeader(header.id)}
-                className="w-8 shrink-0 flex items-center justify-center text-[#a83836] hover:bg-[#fa746f]/20 rounded-lg transition-colors h-full py-2"
+                className="flex h-full w-8 shrink-0 items-center justify-center rounded-lg py-2 text-[#a83836] transition-colors hover:bg-[#fa746f]/20"
                 title="Remove Header"
               >
                 <MaterialIcon icon="close" className="text-[18px]" />
               </button>
             </div>
           ))}
-          <button 
+          <button
+            type="button"
             onClick={addHeader}
-            className="w-full mt-1 py-2 text-[13px] font-bold text-[#3a6095] hover:bg-[#e0e4dc] rounded-xl transition-colors flex items-center justify-center gap-1"
+            className="mt-1 flex w-full items-center justify-center gap-1 rounded-xl py-2 text-[13px] font-bold text-[#3a6095] transition-colors hover:bg-[#e0e4dc]"
           >
             <MaterialIcon icon="add" className="text-[18px]" /> Add Header
           </button>
         </div>
       </div>
 
-      <div className="flex flex-col gap-2 w-full">
-        <span className="text-[10px] font-bold text-[#afb3ac] tracking-wider uppercase">Body (JSON)</span>
-        <textarea 
+      <div className="flex w-full flex-col gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-[#afb3ac]">Body (JSON)</span>
+        <textarea
           value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="{}" 
-          className="w-full h-32 bg-[#f3f4ee] border-none outline-none text-[#2f342e] font-mono text-[13px] rounded-[1.25rem] p-4 resize-none focus:ring-2 focus:ring-[#3a6095]"
+          onChange={(e) => {
+            const t = e.target.value.trim();
+            updateHttp({ body: t === '' ? undefined : t });
+          }}
+          placeholder="{}"
+          className="h-32 w-full resize-none rounded-[1.25rem] border-none bg-[#f3f4ee] p-4 font-mono text-[13px] text-[#2f342e] outline-none focus:ring-2 focus:ring-[#3a6095]"
         />
       </div>
     </div>

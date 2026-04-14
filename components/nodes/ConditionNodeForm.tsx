@@ -1,35 +1,41 @@
-import React from 'react';
+'use client';
 
-export const ConditionNodeForm = () => {
+import React, { useCallback } from 'react';
+import { useAtom } from 'jotai';
+import { nodesAtom } from '@/store/workflowStore';
+
+const DEFAULT_CONDITION_SCRIPT = `console.log(JSON.stringify({ result: true }));`;
+
+export const ConditionNodeForm = ({ nodeId }: { nodeId: string }) => {
+  const [nodes, setNodes] = useAtom(nodesAtom);
+
+  const node = nodes.find((n) => n.id === nodeId);
+  const data = (node?.data ?? {}) as Record<string, unknown>;
+  const script = (data.script as string) || DEFAULT_CONDITION_SCRIPT;
+
+  const patchScript = useCallback(
+    (next: string) => {
+      setNodes((nds) =>
+        nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, script: next } } : n))
+      );
+    },
+    [nodeId, setNodes]
+  );
+
   return (
-    <div className="flex flex-col gap-5 w-full">
-      <div className="flex flex-col gap-2 w-full">
-        <span className="text-[10px] font-bold text-[#afb3ac] tracking-wider uppercase">Input Key</span>
-        <input 
-          type="text" 
-          placeholder="e.g. fetch_data.statusCode" 
-          defaultValue="fetch_data.statusCode"
-          className="w-full bg-[#f3f4ee] border-none outline-none text-[#2f342e] text-[13px] rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-[#3a6095]"
+    <div className="flex w-full flex-col gap-5">
+      <p className="text-[12px] leading-relaxed text-[#afb3ac]">
+        Branching uses <code className="rounded bg-[#edefe8] px-1 text-[#2f342e]">result</code> in JSON
+        printed to stdout. Edit the script below.
+      </p>
+      <div className="flex w-full flex-col gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-[#afb3ac]">Condition script</span>
+        <textarea
+          value={script}
+          onChange={(e) => patchScript(e.target.value)}
+          spellCheck={false}
+          className="min-h-[120px] w-full resize-y rounded-[1.25rem] border-none bg-[#f3f4ee] p-4 font-mono text-[13px] text-[#2f342e] outline-none focus:ring-2 focus:ring-[#3a6095]"
         />
-      </div>
-
-      <div className="flex flex-col gap-2 w-full">
-        <span className="text-[10px] font-bold text-[#afb3ac] tracking-wider uppercase">Condition</span>
-        <div className="flex gap-2 w-full">
-          <select className="flex-1 min-w-0 bg-[#f3f4ee] border-none outline-none text-[#2f342e] text-[13px] font-bold rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-[#3a6095]">
-            <option>Equals (==)</option>
-            <option>Not Equals (!=)</option>
-            <option>Greater Than (&gt;)</option>
-            <option>Less Than (&lt;)</option>
-            <option>Contains</option>
-          </select>
-          <input 
-            type="text" 
-            placeholder="Value" 
-            defaultValue="200"
-            className="flex-1 min-w-0 bg-[#f3f4ee] border-none outline-none text-[#2f342e] text-[13px] rounded-xl px-3 py-2.5 focus:ring-2 focus:ring-[#3a6095]"
-          />
-        </div>
       </div>
     </div>
   );

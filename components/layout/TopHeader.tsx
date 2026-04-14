@@ -1,23 +1,27 @@
 'use client';
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { MaterialIcon } from '../ui/MaterialIcon';
-import { LiveConnectionToggle } from '../ui/LiveConnectionToggle';
 import { HistoryPopup } from '../ui/HistoryPopup';
 import {
   workflowTitleAtom,
   workflowLastUpdatedAtom,
   tenantNameAtom,
-  persistedWorkflowIdAtom,
+  tenantIdAtom,
   workflowSavingAtom,
   workflowSaveErrorAtom,
+  workflowCheckpointingAtom,
+  workflowActiveVersionAtom,
+  workflowCreatorAtom,
+  persistedWorkflowIdAtom,
+  workflowPendingVersionLoadAtom,
+  workflowViewingVersionAtom,
 } from '../../store/workflowStore';
-import { runStatusAtom } from '../../store/executionStore';
+import { runStatusAtom, runStreamStatusAtom, type RunStreamStatus } from '../../store/executionStore';
 import { useWorkflowDebugger } from '../../hooks/useWorkflowDebugger';
-import { useWorkflowSync } from '../../hooks/useWorkflowSync';
 import { useWorkflowSave } from '../../hooks/useWorkflowSave';
 import { useWorkflowRun } from '../../hooks/useWorkflowRun';
 import { authClient } from '@/lib/auth/auth-client';
@@ -39,14 +43,23 @@ const STATUS_LABELS: Record<RunStatus, string> = {
   failed: '✕ Failed',
 };
 
+const STREAM_LABELS: Record<RunStreamStatus, string> = {
+  idle: 'Run stream off',
+  connecting: 'Connecting…',
+  open: 'Run stream live',
+  error: 'Run stream error',
+  closed: 'Run stream ended',
+};
+
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export const TopHeader = () => {
   const [title, setTitle] = useAtom(workflowTitleAtom);
   const [lastUpdated] = useAtom(workflowLastUpdatedAtom);
   const [showHistory, setShowHistory] = useState(false);
-  const tenantName = useAtomValue(tenantNameAtom);
+  const historyRef = useRef<HTMLDivElement>(null);
   const setTenantName = useSetAtom(tenantNameAtom);
+  const setTenantId = useSetAtom(tenantIdAtom);
 
   useEffect(() => {
     async function fetchTenantName() {
@@ -66,6 +79,9 @@ export const TopHeader = () => {
         if (data.tenant?.name) {
           setTenantName(data.tenant.name);
         }
+        if (data.tenant?.id) {
+          setTenantId(data.tenant.id);
+        }
       } catch (err) {
         console.error('[TopHeader] Failed to fetch tenant name:', err);
         setTenantName('FlowForge');
@@ -73,24 +89,27 @@ export const TopHeader = () => {
     }
 
     fetchTenantName();
-  }, [setTenantName]);
+  }, [setTenantName, setTenantId]);
 
   const runStatus = useAtomValue(runStatusAtom);
+  const runStreamStatus = useAtomValue(runStreamStatusAtom);
 
   const saving = useAtomValue(workflowSavingAtom);
   const saveError = useAtomValue(workflowSaveErrorAtom);
+  const checkpointing = useAtomValue(workflowCheckpointingAtom);
+  const activeVersion = useAtomValue(workflowActiveVersionAtom);
+  const workflowCreator = useAtomValue(workflowCreatorAtom);
+  const persistedWorkflowId = useAtomValue(persistedWorkflowIdAtom);
+  const setPendingVersionLoad = useSetAtom(workflowPendingVersionLoadAtom);
+  const viewingVersion = useAtomValue(workflowViewingVersionAtom);
 
-  const workflowId = useAtomValue(persistedWorkflowIdAtom);
-  const { save } = useWorkflowSave();
-  const { run: runWorkflow, running } = useWorkflowRun(save);
+  const { save, checkpoint } = useWorkflowSave();
+  const { run: runWorkflow } = useWorkflowRun(save);
 
-  const syncStatus = useWorkflowSync(workflowId);
+  const runBusy = runStatus === 'running' || runStreamStatus === 'connecting';
+
   const [showDebugger, setShowDebugger] = useState(false);
   const debuggerData = useWorkflowDebugger();
-
-  const handleSave = useCallback(async () => {
-    await save();
-  }, [save]);
 
   useEffect(() => {
     if (!showDebugger) return;
@@ -100,6 +119,26 @@ export const TopHeader = () => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [showDebugger]);
+
+  useEffect(() => {
+    if (!showHistory) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowHistory(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showHistory]);
+
+  useEffect(() => {
+    if (!showHistory) return;
+    const onDown = (e: MouseEvent) => {
+      if (historyRef.current && !historyRef.current.contains(e.target as Node)) {
+        setShowHistory(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [showHistory]);
 
   // ── Render ─ten─n─Name─────────────────────────────────────────────────────────
 
@@ -114,28 +153,97 @@ export const TopHeader = () => {
           <MaterialIcon icon="arrow_back" />
         </Link>
 
-        <div className="relative flex flex-col justify-center">
+        <div ref={historyRef} className="relative flex flex-col justify-center">
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
+            placeholder="Untitled workflow"
             className="text-xl font-bold tracking-tight text-stone-800 bg-transparent border-none outline-none hover:bg-stone-200/50 focus:bg-stone-200/50 px-2 py-0.5 rounded transition-all w-80"
           />
-          <div
-            onClick={() => setShowHistory(!showHistory)}
-            className="text-[11px] font-semibold text-stone-500 hover:text-blue-600 transition-colors flex items-center gap-1 cursor-pointer px-2 py-0.5 rounded w-max"
+          <button
+            type="button"
+            title="Version history — checkpoints are immutable snapshots"
+            onClick={() => setShowHistory((open) => !open)}
+            className="flex w-max max-w-[min(100vw-4rem,28rem)] flex-wrap items-center gap-x-1 gap-y-0.5 rounded px-2 py-0.5 text-left text-[11px] font-semibold text-stone-500 transition-colors hover:bg-stone-100/80 hover:text-blue-600"
           >
-            By {tenantName} <span className="w-1 h-1 rounded-full bg-stone-400 inline-block" /> Last updated {lastUpdated}
-            <MaterialIcon icon="history" className="text-[14px] ml-0.5" />
-          </div>
-          {showHistory && <HistoryPopup onClose={() => setShowHistory(false)} />}
+            <span
+              className="truncate"
+              title={workflowCreator?.email ? `Email: ${workflowCreator.email}` : undefined}
+            >
+              Created by {workflowCreator?.name?.trim() || 'Unknown'}
+            </span>
+            <span className="inline-block h-1 w-1 shrink-0 rounded-full bg-stone-400" aria-hidden />
+            <span>Updated {lastUpdated}</span>
+            {activeVersion != null && (
+              <>
+                <span className="inline-block h-1 w-1 shrink-0 rounded-full bg-stone-400" aria-hidden />
+                <span className="rounded bg-stone-200/80 px-1.5 py-0.5 font-mono text-[10px] text-stone-600">
+                  v{activeVersion}
+                </span>
+              </>
+            )}
+            {viewingVersion != null && (
+              <>
+                <span className="inline-block h-1 w-1 shrink-0 rounded-full bg-stone-400" aria-hidden />
+                <span className="rounded bg-blue-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-blue-700">
+                  Viewing v{viewingVersion}
+                </span>
+              </>
+            )}
+            <MaterialIcon icon="history" className="ml-0.5 shrink-0 text-[14px]" aria-hidden />
+          </button>
+          {showHistory && (
+            <HistoryPopup
+              onClose={() => setShowHistory(false)}
+              onSelectVersion={(vn) => {
+                setPendingVersionLoad(vn);
+                setShowHistory(false);
+              }}
+            />
+          )}
         </div>
       </div>
 
       <div className="flex items-center gap-3">
-        {/* Sync Status */}
-        {syncStatus === 'syncing' && <span className="text-xs font-semibold text-stone-500 animate-pulse">Syncing...</span>}
-        {syncStatus === 'synced' && <span className="text-xs font-semibold text-emerald-600">Synced</span>}
-        {syncStatus === 'error' && <span className="text-xs font-semibold text-red-600">Sync Error</span>}
+        {/* Run stream (WebSocket) + autosave hint */}
+        <div className="flex flex-col items-end gap-0.5 mr-1">
+          <span
+            className={`text-[11px] font-semibold ${
+              runStreamStatus === 'open'
+                ? 'text-emerald-600'
+                : runStreamStatus === 'connecting'
+                  ? 'text-stone-500 animate-pulse'
+                  : runStreamStatus === 'error'
+                    ? 'text-red-600'
+                    : 'text-stone-400'
+            }`}
+            title="Connection to /api/ws/runs/:runId during a workflow run"
+          >
+            {STREAM_LABELS[runStreamStatus]}
+          </span>
+          {saving && (
+            <span className="text-[10px] font-semibold text-stone-400">Saving draft…</span>
+          )}
+          {checkpointing && (
+            <span className="text-[10px] font-semibold text-stone-400">Creating checkpoint…</span>
+          )}
+          {saveError && !saving && !checkpointing && (
+            <span className="text-[10px] font-semibold text-red-600 max-w-[12rem] text-right truncate" title={saveError}>
+              {saveError}
+            </span>
+          )}
+        </div>
+
+        <button
+          type="button"
+          title="Save an immutable version snapshot (numbered). Edits still auto-save as draft on the latest version."
+          onClick={() => void checkpoint()}
+          disabled={checkpointing || saving || !persistedWorkflowId}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 text-sm font-semibold transition-all shadow-sm disabled:opacity-50 disabled:pointer-events-none"
+        >
+          <MaterialIcon icon="bookmark_add" className={`text-base ${checkpointing ? 'animate-pulse' : ''}`} />
+          Checkpoint
+        </button>
 
         {/* Debug JSON */}
         <button
@@ -153,35 +261,15 @@ export const TopHeader = () => {
           </span>
         )}
 
-        <LiveConnectionToggle />
-
-        {/* Save Version */}
-        <div className="flex flex-col items-end gap-0.5">
-          <button
-            id="save-workflow-btn"
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-stone-200 bg-white hover:bg-stone-50 text-stone-700 text-sm font-semibold transition-all disabled:opacity-50 shadow-sm"
-          >
-            <MaterialIcon icon="save" className="text-base" />
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-          {saveError && (
-            <span className="text-[10px] font-semibold text-red-600 max-w-[14rem] text-right leading-tight" title={saveError}>
-              {saveError}
-            </span>
-          )}
-        </div>
-
         {/* Run Workflow */}
         <button
           id="run-workflow-btn"
           onClick={() => void runWorkflow()}
-          disabled={running}
+          disabled={runBusy}
           className="flex items-center gap-1.5 bg-[#3a6095] text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors hover:bg-[#2c4c77] active:bg-[#264060] disabled:opacity-60"
         >
-          <MaterialIcon icon={running ? 'sync' : 'play_arrow'} className={`text-base ${running ? 'animate-spin' : ''}`} />
-          {running ? 'Running…' : 'Run Workflow'}
+          <MaterialIcon icon={runBusy ? 'sync' : 'play_arrow'} className={`text-base ${runBusy ? 'animate-spin' : ''}`} />
+          {runBusy ? 'Starting…' : 'Run Workflow'}
         </button>
 
         <div className="flex items-center gap-2 pl-2 border-l border-stone-200">

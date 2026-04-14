@@ -16,8 +16,8 @@ export const ConditionNode = ({ id, data, selected }: any) => {
       headerTextClass="text-blue-800"
       iconName="call_split"
       iconBgClass="bg-blue-50 text-blue-600"
-      title={data?.title || "Check Subscription"}
-      description={data?.description || "plan_type == 'enterprise'"}
+      title={data?.title !== undefined ? data.title : "Check Subscription"}
+      description={data?.description !== undefined ? data.description : "plan_type == 'enterprise'"}
       
       handles={
         <>
