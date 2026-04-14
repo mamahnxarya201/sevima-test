@@ -23,6 +23,7 @@ import { NodeLibrary } from '../../components/ui/NodeLibrary';
 import { ContextMenu } from '../../components/ui/ContextMenu';
 import { ExecutionSidebar } from '../../components/ui/ExecutionSidebar';
 import { NodeSettings } from '../../components/ui/NodeSettings';
+import { CanvasAiAssistant } from '../../components/ui/CanvasAiAssistant';
 
 import { HttpNode } from '../../components/nodes/HttpNode';
 import { ConditionNode } from '../../components/nodes/ConditionNode';
@@ -44,6 +45,7 @@ import {
   workflowViewingVersionAtom,
   workflowPendingVersionLoadAtom,
   workflowCreatorAtom,
+  workflowSettingsAtom,
   workflowVersionsListAtom,
   workflowLastUpdatedAtom,
   tenantIdAtom,
@@ -52,6 +54,8 @@ import { useCanvasDraftPersistence, readLocalCanvasDraft } from '../../hooks/use
 import { useDebouncedWorkflowSave } from '../../hooks/useDebouncedWorkflowSave';
 import type { ExecutionStatus } from '../../store/executionStore';
 import { authClient } from '@/lib/auth/auth-client';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
+import { parseWorkflowSettings } from '@/lib/dag/workflowSettings';
 import { parseEditorState } from '@/lib/canvas/editorState';
 import { importDagToCanvas } from '@/lib/canvas/dagImporter';
 import {
@@ -60,6 +64,9 @@ import {
   versionSummariesFromWorkflow,
 } from '@/lib/workflow/fetchWorkflowMeta';
 import { formatRelativeTime } from '@/lib/datetime/formatRelativeTime';
+import { getLayoutedElements } from '@/utils/layout';
+import type { DagSchema } from '@/lib/dag/types';
+import { useRolePermissions } from '@/hooks/useRolePermissions';
 
 const nodeTypes = {
   http: HttpNode,
@@ -86,6 +93,8 @@ function mapStatus(s: string): ExecutionStatus {
 }
 
 function WorkflowCanvas() {
+  const authed = useRequireAuth();
+  const { canEdit } = useRolePermissions();
   const [nodes, setNodes] = useAtom(nodesAtom);
   const [edges, setEdges] = useAtom(edgesAtom);
   const [inputMode, setInputMode] = React.useState<'mouse' | 'trackpad'>('mouse');
@@ -97,9 +106,12 @@ function WorkflowCanvas() {
   const workflowLoadScopeRef = React.useRef<string>('');
   const versionSwitchGenerationRef = React.useRef(0);
   const [persistedWorkflowId, setPersistedWorkflowId] = useAtom(persistedWorkflowIdAtom);
+  const workflowTitle = useAtomValue(workflowTitleAtom);
+  const workflowSettings = useAtomValue(workflowSettingsAtom);
   const setWorkflowTitle = useSetAtom(workflowTitleAtom);
   const setWorkflowActiveVersion = useSetAtom(workflowActiveVersionAtom);
   const setWorkflowCreator = useSetAtom(workflowCreatorAtom);
+  const setWorkflowSettings = useSetAtom(workflowSettingsAtom);
   const setWorkflowVersionsList = useSetAtom(workflowVersionsListAtom);
   const setWorkflowLastUpdated = useSetAtom(workflowLastUpdatedAtom);
   const setViewingVersion = useSetAtom(workflowViewingVersionAtom);
@@ -183,6 +195,7 @@ function WorkflowCanvas() {
         const w = meta.workflow;
         const ver = w.versions?.[0];
         setWorkflowCreator(meta.createdBy);
+        setWorkflowSettings(parseWorkflowSettings(w.settings));
         setWorkflowVersionsList(versionSummariesFromWorkflow(w));
         setWorkflowLastUpdated(formatRelativeTime(w.updatedAt));
         if (typeof w.activeVersion === 'number') {
@@ -246,6 +259,7 @@ function WorkflowCanvas() {
     withPersistSuppressed,
     setWorkflowActiveVersion,
     setWorkflowCreator,
+    setWorkflowSettings,
     setWorkflowVersionsList,
     setWorkflowLastUpdated,
     setViewingVersion,
@@ -261,13 +275,19 @@ function WorkflowCanvas() {
   );
 
   const onNodesChange = useCallback(
-    (changes: any) => setNodes((nds) => applyNodeChanges(changes, nds)),
-    [setNodes]
+    (changes: any) => {
+      if (!canEdit) return;
+      setNodes((nds) => applyNodeChanges(changes, nds));
+    },
+    [setNodes, canEdit]
   );
 
   const onEdgesChange = useCallback(
-    (changes: any) => setEdges((eds) => applyEdgeChanges(changes, eds)),
-    [setEdges]
+    (changes: any) => {
+      if (!canEdit) return;
+      setEdges((eds) => applyEdgeChanges(changes, eds));
+    },
+    [setEdges, canEdit]
   );
 
   const [menu, setMenu] = React.useState<{
@@ -423,11 +443,13 @@ function WorkflowCanvas() {
   }, []);
 
   const onConnect = useCallback(
-    (params: any) =>
+    (params: any) => {
+      if (!canEdit) return;
       setEdges((eds) =>
         addEdge({ ...params, type: 'smoothstep', animated: true, style: defaultEdgeStyle }, eds)
-      ),
-    [setEdges]
+      );
+    },
+    [setEdges, canEdit]
   );
 
   const handleAddNode = useCallback(
@@ -435,6 +457,7 @@ function WorkflowCanvas() {
       type: 'condition' | 'http' | 'delay' | 'script',
       meta?: { x: number; y: number; sourceId: string | null }
     ) => {
+      if (!canEdit) return;
       const nid = newNodeId();
       let position = { x: window.innerWidth / 2 - 100, y: window.innerHeight / 2 - 100 };
       if (meta) position = screenToFlowPosition({ x: meta.x, y: meta.y });
@@ -453,51 +476,73 @@ function WorkflowCanvas() {
         ]);
       }
     },
-    [setNodes, setEdges, screenToFlowPosition]
+    [setNodes, setEdges, screenToFlowPosition, canEdit]
   );
 
-  const onConnectStart = useCallback((_: any, { nodeId }: any) => {
-    connectingNodeId.current = nodeId;
-  }, []);
+  const onConnectStart = useCallback(
+    (_: any, { nodeId }: any) => {
+      if (!canEdit) return;
+      connectingNodeId.current = nodeId;
+    },
+    [canEdit]
+  );
 
   const onConnectEnd = useCallback((event: any, connectionState: any) => {
+    if (!canEdit) return;
     if (connectionState.isValid) return;
     const { clientX, clientY } = 'changedTouches' in event ? event.changedTouches[0] : event;
     const sourceNodeId = connectionState?.fromNode?.id || connectingNodeId.current;
     setMiniMenu({ x: clientX, y: clientY, sourceNodeId });
     connectingNodeId.current = null;
-  }, []);
+  }, [canEdit]);
 
   const onNodeContextMenu = useCallback((e: React.MouseEvent, node: any) => {
+    if (!canEdit) return;
     e.preventDefault();
     setMenu({ x: e.clientX, y: e.clientY, entity: { id: node.id, type: 'node' } });
-  }, []);
+  }, [canEdit]);
 
   const onEdgeContextMenu = useCallback((e: React.MouseEvent, edge: any) => {
+    if (!canEdit) return;
     e.preventDefault();
     setMenu({ x: e.clientX, y: e.clientY, entity: { id: edge.id, type: 'edge' } });
-  }, []);
+  }, [canEdit]);
 
   const onNodeDoubleClick = useCallback(
     (e: React.MouseEvent, node: any) => {
       e.preventDefault();
+      if (!canEdit) return;
       if (runSidebarLocked) return;
       setSelectedNode({ id: node.id, type: node.type });
       setSidebarOpen(true);
     },
-    [runSidebarLocked]
+    [runSidebarLocked, canEdit]
   );
+
+  const applyAiDag = useCallback(
+    (dag: DagSchema) => {
+      if (!canEdit) return;
+      const imported = importDagToCanvas(dag);
+      const layouted = getLayoutedElements(imported.nodes, imported.edges);
+      setNodes(layouted.nodes);
+      setEdges(layouted.edges);
+      requestAnimationFrame(() => {
+        fitView({ padding: 0.15 });
+      });
+    },
+    [setNodes, setEdges, fitView, canEdit]
+  );
+
+  if (!authed) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-[#fafaf5] font-['Manrope'] text-[13px] font-semibold text-[#afb3ac]">
+        Authenticating…
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen w-full bg-[#fafaf5] font-sans overflow-hidden text-[#2f342e]">
-      <link
-        href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap"
-        rel="stylesheet"
-      />
-      <link
-        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
-        rel="stylesheet"
-      />
       <style>{`
         .react-flow__nodesselection-rect { display: none !important; border: none !important; }
       `}</style>
@@ -505,7 +550,7 @@ function WorkflowCanvas() {
       <main className="flex-1 flex flex-col relative min-w-0">
         <TopHeader />
         <div className="flex-1 flex w-full relative overflow-hidden">
-          <NodeLibrary onAddNode={handleAddNode} />
+          {canEdit && <NodeLibrary onAddNode={handleAddNode} />}
 
           <div className="flex-1 h-full relative min-w-0">
             <ReactFlow
@@ -524,10 +569,14 @@ function WorkflowCanvas() {
                 setMiniMenu(null);
               }}
               onPaneContextMenu={(e) => {
+                if (!canEdit) return;
                 e.preventDefault();
                 setMenu({ x: e.clientX, y: e.clientY, entity: { id: null, type: 'pane' } });
                 setMiniMenu(null);
               }}
+              nodesDraggable={canEdit}
+              nodesConnectable={canEdit}
+              edgesReconnectable={canEdit}
               onViewportChange={onViewportChange}
               nodeTypes={nodeTypes}
               panOnScroll={inputMode === 'trackpad'}
@@ -594,9 +643,22 @@ function WorkflowCanvas() {
                 >
                   <MaterialIcon icon="touchpad_mouse" className="text-xl" />
                 </button>
+                {canEdit && (
+                  <>
+                    <div className="w-px h-5 bg-[#edefe8] mx-1" />
+                    <CanvasAiAssistant
+                      workflowTitle={workflowTitle}
+                      nodes={nodes}
+                      edges={edges}
+                      workflowSettings={workflowSettings}
+                      onApplyDag={applyAiDag}
+                      compactTrigger
+                    />
+                  </>
+                )}
               </Panel>
 
-              {menu && (
+              {canEdit && menu && (
                 <ContextMenu
                   x={menu.x}
                   y={menu.y}
@@ -605,7 +667,7 @@ function WorkflowCanvas() {
                 />
               )}
 
-              {miniMenu && (
+              {canEdit && miniMenu && (
                 <div
                   style={{
                     position: 'fixed',
