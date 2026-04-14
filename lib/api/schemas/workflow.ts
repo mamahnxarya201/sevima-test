@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { workflowSettingsSchema } from '@/lib/dag/workflowSettings';
 
 /** Path segments that are UUIDs (workflow id, run id, etc.) */
 export const uuidParamSchema = z.string().uuid('Invalid id');
@@ -10,7 +11,7 @@ export const workflowListQuerySchema = z
   .object({
     search: z.string().max(500).optional(),
     sort: z.enum(['name', 'updated']).default('updated'),
-    limit: z.coerce.number().int().min(1).max(100).default(20),
+    limit: z.coerce.number().int().min(1).max(100).default(10),
     offset: z.coerce.number().int().min(0).default(0),
   })
   .strict();
@@ -32,6 +33,8 @@ export const patchWorkflowBodySchema = z
     editorState: z.unknown().optional(),
     /** When true with definition, create a new WorkflowVersion row (immutable checkpoint). When false/omitted, update the latest version in place (draft autosave). */
     checkpoint: z.boolean().optional(),
+    /** Workflow execution settings (retries, timeout, failure tolerance). */
+    settings: workflowSettingsSchema.optional(),
   })
   .strict()
   .refine((o) => Object.keys(o).length > 0, { message: 'At least one field is required' })
@@ -47,7 +50,17 @@ export const workflowRunsListQuerySchema = z
   })
   .strict();
 
+export const executionLogsListQuerySchema = z
+  .object({
+    search: z.string().max(500).optional(),
+    sort: z.enum(['newest', 'oldest']).default('newest'),
+    limit: z.coerce.number().int().min(1).max(100).default(10),
+    offset: z.coerce.number().int().min(0).default(0),
+  })
+  .strict();
+
 export type WorkflowListQuery = z.infer<typeof workflowListQuerySchema>;
 export type WorkflowRunsListQuery = z.infer<typeof workflowRunsListQuerySchema>;
+export type ExecutionLogsListQuery = z.infer<typeof executionLogsListQuerySchema>;
 export type CreateWorkflowBody = z.infer<typeof createWorkflowBodySchema>;
 export type PatchWorkflowBody = z.infer<typeof patchWorkflowBodySchema>;
