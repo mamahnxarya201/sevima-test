@@ -1,0 +1,128 @@
+/*
+ * FlowForge — Grafana theme override
+ *
+ * Matches "The Tactile Studio" design system:
+ *   surface:               #fafaf5
+ *   surface-container-low: #f3f4ee
+ *   surface-container:     #edefe8
+ *   surface-container-high:#e0e4dc
+ *   primary:               #3a6095
+ *   primary-container:     #9ec2fe
+ *   on-surface:            #2f342e
+ *   outline-variant:       #afb3ac
+ *   error:                 #a83836
+ */
+
+/* ── Global background ──────────────────────────────────── */
+body,
+.main-view,
+.scroll-canvas,
+.scrollbar-view,
+[class*="page-body"],
+[class*="page-container"] {
+  background: #fafaf5 !important;
+}
+
+/* ── Panel cards ────────────────────────────────────────── */
+.panel-container,
+[class*="panel-container"] {
+  background: #f3f4ee !important;
+  border: none !important;
+  border-radius: 1.25rem !important;
+  box-shadow: 0 12px 40px rgba(47, 52, 46, 0.06) !important;
+}
+
+/* ── Panel titles ───────────────────────────────────────── */
+[class*="panel-title"],
+.panel-title-text {
+  font-family: 'Manrope', 'Inter', sans-serif !important;
+  color: #2f342e !important;
+  font-weight: 700 !important;
+}
+
+/* ── Text colors ────────────────────────────────────────── */
+body,
+.css-wf08df-Panel,
+[class*="grafana-app"] {
+  color: #2f342e !important;
+}
+
+/* Muted/secondary text */
+[class*="text-secondary"],
+[class*="muted"] {
+  color: #afb3ac !important;
+}
+
+/* ── Top nav / header (hidden in kiosk, but just in case) ─ */
+.navbar,
+[class*="NavToolbar"],
+nav[class*="app-chrome"] {
+  background: rgba(250, 250, 245, 0.85) !important;
+  backdrop-filter: blur(20px) !important;
+  border-bottom: 1px solid rgba(175, 179, 172, 0.12) !important;
+}
+
+/* ── Buttons ────────────────────────────────────────────── */
+button[class*="primary"],
+.btn-primary {
+  background: linear-gradient(135deg, #3a6095, #9ec2fe) !important;
+  border: none !important;
+  border-radius: 0.75rem !important;
+  color: #fff !important;
+}
+
+/* ── Stat panel values ──────────────────────────────────── */
+[class*="singlestat-panel-value"],
+[data-testid="data-testid Panel header FlowForge"] {
+  font-family: 'Manrope', sans-serif !important;
+}
+
+/* ── Gauge backgrounds ──────────────────────────────────── */
+[class*="gauge"] {
+  font-family: 'Inter', sans-serif !important;
+}
+
+/* ── Graph grid lines ───────────────────────────────────── */
+.flot-tick-label,
+.graph-panel__chart {
+  color: #afb3ac !important;
+}
+
+/* ── Scrollbars (subtle) ────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f3f4ee;
+}
+::-webkit-scrollbar-thumb {
+  background: #e0e4dc;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #afb3ac;
+}
+
+/* ── Time series tooltip ────────────────────────────────── */
+[class*="tooltip"],
+.popper__background {
+  background: rgba(250, 250, 245, 0.95) !important;
+  border: 1px solid rgba(175, 179, 172, 0.15) !important;
+  border-radius: 0.75rem !important;
+  color: #2f342e !important;
+  box-shadow: 0 12px 40px rgba(47, 52, 46, 0.06) !important;
+}
+
+/* ── Log panel rows ─────────────────────────────────────── */
+[class*="logs-row"] {
+  font-family: 'Roboto Mono', monospace !important;
+  font-size: 12px !important;
+}
+
+/* ── Remove default Grafana borders ─────────────────────── */
+hr,
+.panel-header-corner,
+[class*="panel-header-corner"] {
+  display: none !important;
+}

@@ -1,0 +1,317 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "text",
+      "title": "",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "transparent": true,
+      "options": {
+        "mode": "html",
+        "content": "<style>html,body,#reactRoot,.grafana-app,#reactRoot>div,#reactRoot>div>div,#reactRoot>div>div>div,[class*='page-'],[class*='main-view'],[class*='scroll-canvas'],[class*='scrollbar-view'],[class*='canvas-'],[class*='layout'],[class*='page-body'],[class*='page-container'],[class*='dashboard-scroll'],[class*='dashboard-content'],[class*='view'],[class*='submenu']{background:#fafaf5!important;background-color:#fafaf5!important}[class*='react-grid-item']>div,[class*='panel-container'],div[class*='panel-container']{background:#f3f4ee!important;background-color:#f3f4ee!important;border:none!important;border-radius:1.25rem!important;box-shadow:0 12px 40px rgba(47,52,46,0.06)!important}body *{font-family:'Inter','Manrope',sans-serif!important}[class*='panel-title'] [class*='text'],h2[class*='PanelTitle'],[class*='panel-title-text']{font-family:'Manrope','Inter',sans-serif!important;color:#2f342e!important;font-weight:700!important;letter-spacing:-0.01em!important}[class*='NavToolbar'],[class*='toolbar'],[class*='kiosk-nav'],[class*='dashboard-toolbar'],[class*='submenu-controls'],nav,header{background:rgba(250,250,245,0.85)!important;backdrop-filter:blur(20px)!important;border:none!important;border-bottom:1px solid rgba(175,179,172,0.12)!important}[class*='NavToolbar'] button,[class*='toolbar'] button,[class*='TimePicker'] button,[class*='RefreshPicker'] button,[class*='toolbar-button'],button[class*='toolbar']{background:#edefe8!important;border:1px solid rgba(175,179,172,0.15)!important;border-radius:0.625rem!important;color:#2f342e!important;font-family:'Inter',sans-serif!important;font-size:0.8125rem!important}[class*='NavToolbar'] button:hover,[class*='toolbar'] button:hover,[class*='toolbar-button']:hover{background:#e0e4dc!important}[class*='NavToolbar'] button[class*='active'],[class*='toolbar'] button[class*='active'],[class*='open'] button{background:#e0e4dc!important}[class*='NavToolbar'] [class*='icon'],[class*='toolbar'] [class*='icon'],svg{color:#2f342e!important;fill:#2f342e!important}[class*='NavToolbar'] select,[class*='toolbar'] select,[class*='toolbar'] input{background:#edefe8!important;border:1px solid rgba(175,179,172,0.15)!important;border-radius:0.5rem!important;color:#2f342e!important}button[class*='primary'],.btn-primary{background:linear-gradient(135deg,#3a6095,#9ec2fe)!important;border:none!important;border-radius:0.75rem!important;color:#fff!important}[class*='flot-tick-label'],[class*='axis-label']{color:#afb3ac!important}::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:#f3f4ee}::-webkit-scrollbar-thumb{background:#e0e4dc;border-radius:3px}::-webkit-scrollbar-thumb:hover{background:#afb3ac}hr,[class*='panel-header-corner']{display:none!important}[class*='Gauge'] text{fill:#2f342e!important}[class*='value-container'] [class*='value'],[class*='singlestat'] [class*='value'],[class*='stat-text']{font-family:'Manrope',sans-serif!important}[class*='dropdown'],[class*='menu'],[class*='popper'],[class*='popover']{background:#f3f4ee!important;border:1px solid rgba(175,179,172,0.15)!important;border-radius:0.75rem!important;box-shadow:0 12px 40px rgba(47,52,46,0.08)!important}[class*='dropdown'] [class*='item'],[class*='menu'] [class*='item'],[class*='option']{color:#2f342e!important}[class*='dropdown'] [class*='item']:hover,[class*='menu'] [class*='item']:hover,[class*='option']:hover{background:#edefe8!important}[class*='tooltip']{background:#2f342e!important;color:#fafaf5!important;border-radius:0.5rem!important}[class*='logs-row'],[class*='log-row']{border-color:rgba(175,179,172,0.12)!important}[class*='Powered'],[class*='footer']{opacity:0!important;height:0!important;overflow:hidden!important}</style>"
+      }
+    },
+    {
+      "title": "Active Runs",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 4, "x": 0, "y": 1 },
+      "transparent": true,
+      "datasource": { "type": "prometheus", "uid": "flowforge-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "#3a6095", "value": null },
+              { "color": "#e8a838", "value": 3 },
+              { "color": "#a83836", "value": 10 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "auto" },
+      "targets": [
+        {
+          "expr": "flowforge_workflow_runs_active{tenant_id=\"$tenant_id\"}",
+          "legendFormat": "active",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Runs (24h)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 4, "x": 4, "y": 1 },
+      "transparent": true,
+      "datasource": { "type": "prometheus", "uid": "flowforge-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "#3a6095", "value": null }]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        {
+          "expr": "increase(flowforge_workflow_runs_total{tenant_id=\"$tenant_id\"}[24h])",
+          "legendFormat": "{{ status }}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Success Rate (24h)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 4, "x": 8, "y": 1 },
+      "transparent": true,
+      "datasource": { "type": "prometheus", "uid": "flowforge-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "#a83836", "value": null },
+              { "color": "#e8a838", "value": 0.8 },
+              { "color": "#4a8c5c", "value": 0.95 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true },
+      "targets": [
+        {
+          "expr": "increase(flowforge_workflow_runs_total{status=\"SUCCESS\",tenant_id=\"$tenant_id\"}[24h]) / clamp_min(increase(flowforge_workflow_runs_total{tenant_id=\"$tenant_id\"}[24h]), 1)",
+          "legendFormat": "success rate",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Failure Rate (24h)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 4, "x": 12, "y": 1 },
+      "transparent": true,
+      "datasource": { "type": "prometheus", "uid": "flowforge-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "#4a8c5c", "value": null },
+              { "color": "#e8a838", "value": 0.05 },
+              { "color": "#a83836", "value": 0.2 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true },
+      "targets": [
+        {
+          "expr": "increase(flowforge_workflow_runs_total{status=~\"FAILED|TIMEOUT\",tenant_id=\"$tenant_id\"}[24h]) / clamp_min(increase(flowforge_workflow_runs_total{tenant_id=\"$tenant_id\"}[24h]), 1)",
+          "legendFormat": "failure rate",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Avg Execution Time (24h)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 4, "x": 16, "y": 1 },
+      "transparent": true,
+      "datasource": { "type": "prometheus", "uid": "flowforge-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "#4a8c5c", "value": null },
+              { "color": "#e8a838", "value": 30 },
+              { "color": "#a83836", "value": 120 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        {
+          "expr": "rate(flowforge_workflow_run_duration_seconds_sum{status=\"SUCCESS\",tenant_id=\"$tenant_id\"}[24h]) / clamp_min(rate(flowforge_workflow_run_duration_seconds_count{status=\"SUCCESS\",tenant_id=\"$tenant_id\"}[24h]), 0.001)",
+          "legendFormat": "avg",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Scheduler — Pending Queue",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 4, "x": 20, "y": 1 },
+      "transparent": true,
+      "datasource": { "type": "prometheus", "uid": "flowforge-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "#4a8c5c", "value": null },
+              { "color": "#e8a838", "value": 5 },
+              { "color": "#a83836", "value": 20 }
+            ]
+          },
+          "color": { "mode": "thresholds" }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [
+        {
+          "expr": "flowforge_scheduler_pending_queue_depth",
+          "legendFormat": "pending",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Run Timeline (1h buckets)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 7 },
+      "transparent": true,
+      "datasource": { "type": "prometheus", "uid": "flowforge-prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "fillOpacity": 60,
+            "stacking": { "mode": "normal", "group": "A" }
+          }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "SUCCESS" }, "properties": [{ "id": "color", "value": { "fixedColor": "#4a8c5c", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "FAILED" }, "properties": [{ "id": "color", "value": { "fixedColor": "#a83836", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "TIMEOUT" }, "properties": [{ "id": "color", "value": { "fixedColor": "#e8a838", "mode": "fixed" } }] }
+        ]
+      },
+      "options": { "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "increase(flowforge_workflow_runs_total{tenant_id=\"$tenant_id\"}[1h])",
+          "legendFormat": "{{ status }}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Scheduler Claimed Runs",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 7 },
+      "transparent": true,
+      "datasource": { "type": "prometheus", "uid": "flowforge-prometheus" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 20 }, "color": { "mode": "fixed", "fixedColor": "#3a6095" } }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "rate(flowforge_scheduler_runs_claimed_total{tenant_id=\"$tenant_id\"}[5m]) * 60",
+          "legendFormat": "claimed/min",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Step Duration by Type (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "transparent": true,
+      "datasource": { "type": "prometheus", "uid": "flowforge-prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "color": { "mode": "palette-classic-by-name" } }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(flowforge_step_run_duration_seconds_bucket{tenant_id=\"$tenant_id\"}[5m]))",
+          "legendFormat": "{{ node_type }} p95",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Step Retries",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "transparent": true,
+      "datasource": { "type": "prometheus", "uid": "flowforge-prometheus" },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "#e8a838" } }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "rate(flowforge_step_retries_total{tenant_id=\"$tenant_id\"}[5m]) * 60",
+          "legendFormat": "{{ node_type }} retries/min",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Step Logs",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 23 },
+      "transparent": true,
+      "datasource": { "type": "loki", "uid": "flowforge-loki" },
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"flowforge\",tenant_id=\"$tenant_id\"}",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["flowforge", "workflows"],
+  "templating": {
+    "list": [
+      {
+        "name": "tenant_id",
+        "label": "Tenant",
+        "type": "textbox",
+        "hide": 2,
+        "current": { "text": "", "value": "" },
+        "query": ""
+      }
+    ]
+  },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "FlowForge Global Health",
+  "uid": "flowforge-global-health",
+  "version": 3
+}
