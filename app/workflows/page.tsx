@@ -3,16 +3,25 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useSetAtom } from 'jotai';
-import { AppShellSidebar } from '@/components/layout/AppShellSidebar';
+import { useAtom, useSetAtom } from 'jotai';
+import { AppShellPage } from '@/components/layout/AppShellPage';
 import { NewWorkflowModal } from '@/components/workflows/NewWorkflowModal';
 import { MaterialIcon } from '@/components/ui/MaterialIcon';
+import { ListQueryControls } from '@/components/ui/ListQueryControls';
+import { ListPagination } from '@/components/ui/ListPagination';
 import { authClient } from '@/lib/auth/auth-client';
-import { tenantNameAtom, tenantIdAtom } from '@/store/workflowStore';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
+import {
+  tenantNameAtom,
+  tenantIdAtom,
+  workflowsListPageAtom,
+  workflowsListPageSizeAtom,
+  workflowsListSearchAtom,
+  workflowsListSortAtom,
+} from '@/store/workflowStore';
 import { formatRelativeTime } from '@/lib/datetime/formatRelativeTime';
 import { runWebSocketUrl, waitForWebSocketOpen } from '@/lib/socket/runWebSocketUrl';
-
-const PAGE_SIZE = 20;
+import { useRolePermissions } from '@/hooks/useRolePermissions';
 
 type RunSummary = {
   runCount: number;
@@ -59,22 +68,29 @@ type ListResponse = {
 };
 
 export default function WorkflowsPage() {
+  const authed = useRequireAuth();
   const router = useRouter();
   const setTenantName = useSetAtom(tenantNameAtom);
   const setTenantId = useSetAtom(tenantIdAtom);
   const [items, setItems] = useState<WorkflowRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [search, setSearch] = useState('');
-  const [sort, setSort] = useState<'updated' | 'name'>('updated');
+  const [search, setSearch] = useAtom(workflowsListSearchAtom);
+  const [sort, setSort] = useAtom(workflowsListSortAtom);
+  const [page, setPage] = useAtom(workflowsListPageAtom);
+  const pageSize = useAtom(workflowsListPageSizeAtom)[0];
   const [modalOpen, setModalOpen] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   /** Set while POST succeeded and we are connected to `/api/ws/runs/:runId` until `complete` (or error). */
   const [runningWorkflowId, setRunningWorkflowId] = useState<string | null>(null);
   const [runFeedback, setRunFeedback] = useState<{ id: string; ok: boolean; message: string } | null>(null);
+  const [deleteFeedback, setDeleteFeedback] = useState<{ id: string; ok: boolean; message: string } | null>(
+    null
+  );
+  const [deleteTarget, setDeleteTarget] = useState<WorkflowRow | null>(null);
+  const [deletingWorkflowId, setDeletingWorkflowId] = useState<string | null>(null);
   const runWsRef = useRef<WebSocket | null>(null);
+  const { canEdit } = useRolePermissions();
 
   useEffect(() => {
     async function fetchTenantName() {
@@ -103,13 +119,9 @@ export default function WorkflowsPage() {
   }, [setTenantName, setTenantId]);
 
   const load = useCallback(
-    async (opts: { append: boolean; nextOffset: number }) => {
+    async (nextPage: number) => {
       setListError(null);
-      if (opts.append) {
-        setLoadingMore(true);
-      } else {
-        setLoading(true);
-      }
+      setLoading(true);
       try {
         const { data: tokenData } = await authClient.token();
         const token = tokenData?.token ?? '';
@@ -121,8 +133,8 @@ export default function WorkflowsPage() {
         const params = new URLSearchParams();
         if (search.trim()) params.set('search', search.trim());
         params.set('sort', sort);
-        params.set('limit', String(PAGE_SIZE));
-        params.set('offset', String(opts.nextOffset));
+        params.set('limit', String(pageSize));
+        params.set('offset', String((nextPage - 1) * pageSize));
         const res = await fetch(`/api/workflows?${params.toString()}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -135,33 +147,30 @@ export default function WorkflowsPage() {
         const data: ListResponse = await res.json();
         const rows = data.workflows ?? [];
         const t = typeof data.total === 'number' ? data.total : rows.length;
-        if (opts.append) {
-          setItems((prev) => [...prev, ...rows]);
-        } else {
-          setItems(rows);
-        }
+        setItems(rows);
         setTotal(t);
-        setOffset(opts.nextOffset + rows.length);
       } catch {
         setListError('Could not load workflows');
         setItems([]);
         setTotal(0);
       } finally {
         setLoading(false);
-        setLoadingMore(false);
       }
     },
-    [search, sort]
+    [search, sort, pageSize]
   );
 
   useEffect(() => {
-    setOffset(0);
-    const t = setTimeout(() => void load({ append: false, nextOffset: 0 }), search ? 200 : 0);
+    const t = setTimeout(() => void load(page), search ? 200 : 0);
     return () => clearTimeout(t);
-  }, [load, search, sort]);
+  }, [load, page, search, sort]);
 
   const navItems = useMemo(
-    () => [{ href: '/workflows', label: 'Workflows', icon: 'account_tree', active: true }],
+    () => [
+      { href: '/workflows', label: 'Workflows', icon: 'account_tree', active: true },
+      { href: '/execution-logs', label: 'Execution Logs', icon: 'list_alt', active: false },
+      { href: '/grafana', label: 'Monitoring', icon: 'monitoring', active: false },
+    ],
     []
   );
 
@@ -174,6 +183,11 @@ export default function WorkflowsPage() {
 
   const triggerRun = useCallback(
     async (workflowId: string) => {
+      if (!canEdit) {
+        setRunFeedback({ id: workflowId, ok: false, message: 'View-only role' });
+        window.setTimeout(() => setRunFeedback(null), 4000);
+        return;
+      }
       setRunFeedback(null);
       runWsRef.current?.close();
       runWsRef.current = null;
@@ -236,7 +250,7 @@ export default function WorkflowsPage() {
           }
           setRunFeedback({ id: workflowId, ok, message });
           window.setTimeout(() => setRunFeedback(null), 4000);
-          void load({ append: false, nextOffset: 0 });
+          void load(page);
         };
 
         ws.onmessage = (evt) => {
@@ -298,88 +312,103 @@ export default function WorkflowsPage() {
         window.setTimeout(() => setRunFeedback(null), 5000);
       }
     },
-    [load]
+    [load, canEdit, page]
   );
 
-  const canLoadMore = items.length < total && !loading && !loadingMore;
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    const workflowId = deleteTarget.id;
+    setDeleteFeedback(null);
+    setDeletingWorkflowId(workflowId);
+    try {
+      const { data: tokenData } = await authClient.token();
+      const token = tokenData?.token ?? '';
+      if (!token) {
+        setDeleteFeedback({ id: workflowId, ok: false, message: 'Not signed in' });
+        return;
+      }
+
+      const res = await fetch(`/api/workflows/${encodeURIComponent(workflowId)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setDeleteFeedback({
+          id: workflowId,
+          ok: false,
+          message: typeof body.error === 'string' ? body.error : 'Could not delete workflow',
+        });
+        return;
+      }
+
+      setItems((prev) => prev.filter((wf) => wf.id !== workflowId));
+      setTotal((prev) => Math.max(0, prev - 1));
+      setDeleteFeedback({ id: workflowId, ok: true, message: 'Deleted' });
+      window.setTimeout(() => setDeleteFeedback(null), 4000);
+
+      const nextPage = items.length === 1 && page > 1 ? page - 1 : page;
+      if (nextPage !== page) setPage(nextPage);
+      else void load(page);
+    } catch {
+      setDeleteFeedback({ id: workflowId, ok: false, message: 'Network error' });
+    } finally {
+      setDeleteTarget(null);
+      setDeletingWorkflowId(null);
+    }
+  }, [deleteTarget, items.length, page, setPage, load]);
+
+  if (!authed) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-[#fafaf5] font-['Manrope'] text-[13px] font-semibold text-[#afb3ac]">
+        Authenticating…
+      </div>
+    );
+  }
 
   return (
-    <div className="flex min-h-screen items-stretch bg-[#fafaf5] font-sans text-[#2f342e]">
-      <link
-        href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap"
-        rel="stylesheet"
-      />
-      <link
-        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
-        rel="stylesheet"
-      />
-
-      <AppShellSidebar items={navItems} />
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-40 bg-[#fafaf5]/85 px-8 py-6 backdrop-blur-[20px]">
-          <div>
-            <h1 className="font-['Manrope'] text-2xl font-bold tracking-tight text-[#2f342e]">
-              Workflows
-            </h1>
-            <p className="mt-1 max-w-xl text-[13px] text-[#afb3ac]">
-              Open an automation to edit, or create a new one. Changes stay in your tenant.
-            </p>
-          </div>
-        </header>
-
-        <main className="flex-1 px-8 py-8">
-          <div className="mx-auto max-w-5xl">
+    <AppShellPage
+      sidebarItems={navItems}
+      title="Workflows"
+      description="Open an automation to edit, or create a new one. Changes stay in your tenant."
+      contentClassName="py-8"
+    >
+      <div className="mx-auto max-w-5xl">
             <div className="mb-8 flex flex-col gap-4">
               <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#3a6095] px-3 py-1.5 text-[12px] font-semibold text-white shadow-sm transition-colors hover:bg-[#2c4c77]"
-                >
-                  <MaterialIcon icon="add" className="text-[16px]" />
-                  New workflow
-                </button>
+                {canEdit ? (
+                  <button
+                    type="button"
+                    onClick={() => setModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#3a6095] px-3 py-1.5 text-[12px] font-semibold text-white shadow-sm transition-colors hover:bg-[#2c4c77]"
+                  >
+                    <MaterialIcon icon="add" className="text-[16px]" />
+                    New workflow
+                  </button>
+                ) : (
+                  <span className="rounded-lg bg-[#edefe8] px-3 py-1.5 text-[12px] font-semibold text-[#afb3ac]">
+                    View-only access
+                  </span>
+                )}
               </div>
               <div className="flex flex-wrap items-end gap-4">
-                <div className="min-w-0 flex-1 sm:min-w-[200px]">
-                  <label
-                    htmlFor="wf-search"
-                    className="mb-1.5 block text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-[#afb3ac]"
-                  >
-                    Search
-                  </label>
-                  <div className="relative">
-                    <MaterialIcon
-                      icon="search"
-                      className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#afb3ac]"
-                    />
-                    <input
-                      id="wf-search"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Filter by name or description"
-                      className="w-full rounded-xl border-0 bg-white py-2.5 pl-10 pr-3 text-[13px] text-[#2f342e] shadow-inner outline-none ring-1 ring-[#afb3ac]/15 transition-shadow focus:ring-2 focus:ring-[#3a6095]"
-                    />
-                  </div>
-                </div>
-                <div className="shrink-0">
-                  <label
-                    htmlFor="wf-sort"
-                    className="mb-1.5 block text-[0.6875rem] font-semibold uppercase tracking-[0.05em] text-[#afb3ac]"
-                  >
-                    Sort
-                  </label>
-                  <select
-                    id="wf-sort"
-                    value={sort}
-                    onChange={(e) => setSort(e.target.value as 'updated' | 'name')}
-                    className="rounded-xl border-0 bg-white py-2.5 pl-3 pr-8 text-[13px] font-medium text-[#2f342e] shadow-inner outline-none ring-1 ring-[#afb3ac]/15 transition-shadow focus:ring-2 focus:ring-[#3a6095]"
-                  >
-                    <option value="updated">Last updated</option>
-                    <option value="name">Name (A–Z)</option>
-                  </select>
-                </div>
+                <ListQueryControls
+                  searchPlaceholder="Filter by name or description"
+                  searchValue={search}
+                  onSearchChange={(value) => {
+                    setSearch(value);
+                    setPage(1);
+                  }}
+                  sortValue={sort}
+                  sortOptions={[
+                    { value: 'updated', label: 'Last updated' },
+                    { value: 'name', label: 'Name (A-Z)' },
+                  ]}
+                  onSortChange={(value) => {
+                    setSort(value as 'updated' | 'name');
+                    setPage(1);
+                  }}
+                />
               </div>
             </div>
 
@@ -400,14 +429,16 @@ export default function WorkflowsPage() {
                   Create one to get started — you&apos;ll draw the graph on the canvas next.
                 </p>
                 <div className="mt-10 flex justify-center">
-                  <button
-                    type="button"
-                    onClick={() => setModalOpen(true)}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#3a6095] px-3 py-1.5 text-[12px] font-semibold text-white shadow-sm transition-colors hover:bg-[#2c4c77]"
-                  >
-                    <MaterialIcon icon="add" className="text-[16px]" />
-                    New workflow
-                  </button>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => setModalOpen(true)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#3a6095] px-3 py-1.5 text-[12px] font-semibold text-white shadow-sm transition-colors hover:bg-[#2c4c77]"
+                    >
+                      <MaterialIcon icon="add" className="text-[16px]" />
+                      New workflow
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (
@@ -510,21 +541,37 @@ export default function WorkflowsPage() {
                             </div>
                           </Link>
                           <div className="flex shrink-0 flex-col items-center justify-center bg-[#f3f4ee]/50 px-2 py-3 sm:px-3">
-                            <button
-                              type="button"
-                              title="Run workflow"
-                              disabled={runningWorkflowId === w.id}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                void triggerRun(w.id);
-                              }}
-                              className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-white text-[#3a6095] shadow-[0_2px_8px_rgba(47,52,46,0.04)] ring-1 ring-[#afb3ac]/15 transition-colors hover:bg-[#edefe8] hover:ring-[#3a6095]/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#3a6095] disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              <MaterialIcon
-                                icon={runningWorkflowId === w.id ? 'sync' : 'play_arrow'}
-                                className={`text-[26px] ${runningWorkflowId === w.id ? 'animate-spin' : ''}`}
-                              />
-                            </button>
+                            {canEdit && (
+                              <>
+                                <button
+                                  type="button"
+                                  title="Run workflow"
+                                  disabled={runningWorkflowId === w.id || deletingWorkflowId === w.id}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    void triggerRun(w.id);
+                                  }}
+                                  className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-white text-[#3a6095] shadow-[0_2px_8px_rgba(47,52,46,0.04)] ring-1 ring-[#afb3ac]/15 transition-colors hover:bg-[#edefe8] hover:ring-[#3a6095]/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#3a6095] disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <MaterialIcon
+                                    icon={runningWorkflowId === w.id ? 'sync' : 'play_arrow'}
+                                    className={`text-[26px] ${runningWorkflowId === w.id ? 'animate-spin' : ''}`}
+                                  />
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Delete workflow"
+                                  disabled={runningWorkflowId === w.id || deletingWorkflowId === w.id}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    setDeleteTarget(w);
+                                  }}
+                                  className="mt-2 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-white text-[#a83836] shadow-[0_2px_8px_rgba(47,52,46,0.04)] ring-1 ring-[#afb3ac]/15 transition-colors hover:bg-[#fa746f]/15 hover:ring-[#a83836]/25 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#a83836] disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <MaterialIcon icon={deletingWorkflowId === w.id ? 'sync' : 'delete'} />
+                                </button>
+                              </>
+                            )}
                             {runFeedback?.id === w.id && (
                               <span
                                 className={`mt-1 max-w-[5.5rem] text-center text-[10px] font-semibold leading-tight ${
@@ -534,37 +581,89 @@ export default function WorkflowsPage() {
                                 {runFeedback.message}
                               </span>
                             )}
+                            {deleteFeedback?.id === w.id && (
+                              <span
+                                className={`mt-1 max-w-[5.5rem] text-center text-[10px] font-semibold leading-tight ${
+                                  deleteFeedback.ok ? 'text-emerald-600' : 'text-[#a83836]'
+                                }`}
+                              >
+                                {deleteFeedback.message}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </li>
                     );
                   })}
                 </ul>
-                {canLoadMore && (
-                  <div className="mt-8 flex justify-center">
-                    <button
-                      type="button"
-                      disabled={loadingMore}
-                      onClick={() => void load({ append: true, nextOffset: offset })}
-                      className="rounded-xl bg-[#edefe8] px-5 py-2.5 text-[13px] font-semibold text-[#2f342e] ring-1 ring-[#afb3ac]/15 transition-colors hover:bg-[#e0e4dc] disabled:opacity-60"
-                    >
-                      {loadingMore ? 'Loading…' : 'Load more'}
-                    </button>
-                  </div>
-                )}
+                <ListPagination
+                  page={page}
+                  pageSize={pageSize}
+                  total={total}
+                  onPageChange={(nextPage) => setPage(nextPage)}
+                />
               </>
             )}
-          </div>
-        </main>
       </div>
-
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-[#2f342e]/35 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal
+          aria-label="Delete workflow"
+          onClick={() => {
+            if (!deletingWorkflowId) setDeleteTarget(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-[#afb3ac]/20 bg-[#fafaf5] p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-['Manrope'] text-[18px] font-bold text-[#2f342e]">Delete workflow?</h3>
+            <p className="mt-2 text-[13px] text-[#2f342e]/75">
+              This will permanently remove{' '}
+              <span className="font-semibold text-[#2f342e]">{deleteTarget.name}</span> including versions and
+              run history.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={!!deletingWorkflowId}
+                onClick={() => setDeleteTarget(null)}
+                className="rounded-xl px-4 py-2 text-[13px] font-semibold text-[#3a6095] transition-colors hover:bg-[#edefe8] disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!!deletingWorkflowId}
+                onClick={() => void confirmDelete()}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-[#a83836] px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#8e2f2d] disabled:opacity-60"
+              >
+                {deletingWorkflowId ? (
+                  <>
+                    <MaterialIcon icon="sync" className="animate-spin" />
+                    Deleting…
+                  </>
+                ) : (
+                  <>
+                    <MaterialIcon icon="delete" />
+                    Delete
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <NewWorkflowModal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
+        canCreate={canEdit}
         onCreated={(id) => {
           router.push(`/canvas?workflowId=${encodeURIComponent(id)}`);
         }}
       />
-    </div>
+    </AppShellPage>
   );
 }
