@@ -15,6 +15,7 @@
 
 import type { Node, Edge } from '@xyflow/react';
 import type { DagSchema, DagNode, DagEdge, HttpConfig } from '../dag/types';
+import type { WorkflowSettings } from '../dag/workflowSettings';
 
 const TYPE_MAP: Record<string, DagNode['type']> = {
   http: 'HTTP_CALL',
@@ -60,9 +61,15 @@ function buildDagNode(node: Node): DagNode {
   const defaultHttpOutputs =
     Array.isArray(rawOutputs) && rawOutputs.length > 0 ? rawOutputs : ['body', 'statusCode'];
 
+  const title = typeof data.title === 'string' && data.title.trim() !== '' ? data.title.trim() : undefined;
+  const description =
+    typeof data.description === 'string' && data.description.trim() !== '' ? data.description.trim() : undefined;
+
   const base: DagNode = {
     id: node.id,
     type,
+    ...(title !== undefined ? { title } : {}),
+    ...(description !== undefined ? { description } : {}),
     image: data.image as string | undefined,
     cpuLimit: data.cpuLimit as string | undefined,
     memLimit: data.memLimit as string | undefined,
@@ -97,10 +104,10 @@ function buildDagNode(node: Node): DagNode {
     };
   }
 
-  // CONDITION
+  // CONDITION — always requires 'result' in outputs for branch resolution
   return {
     ...base,
-    outputs: rawOutputs,
+    outputs: ['result'],
     runtime,
     script: userScript && userScript.trim() !== '' ? userScript : DEFAULT_CONDITION_SCRIPT,
   };
@@ -109,9 +116,17 @@ function buildDagNode(node: Node): DagNode {
 export function exportCanvasToDag(
   workflowName: string,
   nodes: Node[],
-  edges: Edge[]
+  edges: Edge[],
+  settings?: WorkflowSettings,
 ): DagSchema {
-  const dagNodes: DagNode[] = nodes.map((node) => buildDagNode(node));
+  const dagNodes: DagNode[] = nodes.map((node) => {
+    const n = buildDagNode(node);
+    if (settings) {
+      if (n.retries === undefined) n.retries = settings.defaultNodeRetries;
+      if (n.retryDelayMs === undefined) n.retryDelayMs = settings.defaultRetryDelayMs;
+    }
+    return n;
+  });
 
   const dagEdges: DagEdge[] = edges.map((edge) => ({
     from: edge.source,
