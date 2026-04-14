@@ -2,16 +2,22 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { authClient } from '@/lib/auth/auth-client';
+import { useRedirectIfAuthenticated } from '@/hooks/useRequireAuth';
 import { MaterialIcon } from '@/components/ui/MaterialIcon';
 
 export default function LoginPage() {
+  const ready = useRedirectIfAuthenticated();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const from = searchParams.get('from');
+  const redirectTo = from && from.startsWith('/') ? from : '/workflows';
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -23,17 +29,22 @@ export default function LoginPage() {
         setError(authError.message ?? 'Login failed');
         return;
       }
-      router.replace('/');
+      router.replace(redirectTo);
     } finally {
       setLoading(false);
     }
   }
 
+  if (!ready) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#fafaf5] font-['Manrope'] text-[13px] font-semibold text-[#afb3ac]">
+        Loading…
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#fafaf5]">
-      <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet" />
-      <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
-
       <div className="w-full max-w-sm">
         {/* Logo / Brand */}
         <div className="text-center mb-8">
