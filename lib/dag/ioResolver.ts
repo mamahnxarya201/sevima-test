@@ -105,6 +105,10 @@ export function parseHttpCallOutputs(
   for (const field of declaredOutputs) {
     if (field in full) result[field] = full[field];
   }
+  // Always expose HTTP status for downstream CONDITION / scripts even when `outputs` filters fields.
+  if (typeof full.statusCode === 'number' && result.statusCode === undefined) {
+    result.statusCode = full.statusCode;
+  }
   return result;
 }
 
