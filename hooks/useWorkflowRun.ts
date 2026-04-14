@@ -1,38 +1,56 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useAtomValue, useSetAtom } from 'jotai';
-import { persistedWorkflowIdAtom } from '../store/workflowStore';
+import { useCallback, useEffect, useRef } from 'react';
+import { useAtomValue, useSetAtom, useStore } from 'jotai';
+import { nodesAtom, persistedWorkflowIdAtom } from '../store/workflowStore';
 import {
   activeRunIdAtom,
+  defaultNodeState,
+  executionMonitorActiveAtom,
+  nodeExecutionFamily,
   runStatusAtom,
-  isLiveConnectionEnabledAtom,
+  runStreamErrorAtom,
+  runStreamStatusAtom,
 } from '../store/executionStore';
 import { authClient } from '@/lib/auth/auth-client';
 import { startWorkflowRun } from '../lib/workflow/startWorkflowRun';
+import { runWebSocketUrl, waitForWebSocketOpen } from '../lib/socket/runWebSocketUrl';
 import type { SaveOutcome } from './useWorkflowSave';
 
 type SaveFn = () => Promise<SaveOutcome>;
 
-function runWebSocketUrl(runId: string, token: string) {
-  const origin =
-    typeof window !== 'undefined'
-      ? window.location.origin.replace(/^http/, 'ws')
-      : '';
-  return `${origin}/api/ws/runs/${runId}?token=${encodeURIComponent(token)}`;
+function mapSnapshotStatus(s: string): string {
+  if (s === 'SUCCESS') return 'SUCCESS';
+  if (s === 'FAILED') return 'FAILED';
+  if (s === 'RUNNING' || s === 'RETRYING') return 'RUNNING';
+  return 'PENDING';
+}
+
+function snapshotDurationMs(sr: {
+  startedAt?: Date | string | null;
+  endedAt?: Date | string | null;
+}): number | undefined {
+  if (!sr.startedAt || !sr.endedAt) return undefined;
+  const a = new Date(sr.startedAt).getTime();
+  const b = new Date(sr.endedAt).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b)) return undefined;
+  return Math.max(0, b - a);
 }
 
 /**
- * Starts a workflow run (POST) then streams step/complete events over WebSocket.
- * Dispatches `dag:step` for the canvas; updates run / live atoms.
+ * POST creates a PENDING run; engine starts when this WebSocket connects.
+ * Waits for WS `open` before treating the run stream as ready.
  */
 export function useWorkflowRun(save: SaveFn) {
   const workflowId = useAtomValue(persistedWorkflowIdAtom);
+  const nodes = useAtomValue(nodesAtom);
+  const store = useStore();
   const setRunStatus = useSetAtom(runStatusAtom);
   const setActiveRunId = useSetAtom(activeRunIdAtom);
-  const setLive = useSetAtom(isLiveConnectionEnabledAtom);
+  const setStreamStatus = useSetAtom(runStreamStatusAtom);
+  const setStreamError = useSetAtom(runStreamErrorAtom);
+  const setExecutionMonitor = useSetAtom(executionMonitorActiveAtom);
 
-  const [running, setRunning] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -44,27 +62,36 @@ export function useWorkflowRun(save: SaveFn) {
 
   const run = useCallback(async () => {
     let wid = workflowId;
-    if (!wid) {
-      const outcome = await save();
-      if (!outcome.ok) return;
-      wid = outcome.workflowId;
-    }
+    const outcome = await save();
+    if (!outcome.ok) return;
+    wid = outcome.workflowId;
     if (!wid) return;
 
     wsRef.current?.close();
     wsRef.current = null;
 
-    setRunning(true);
-    setRunStatus('running');
+    setExecutionMonitor(true);
+    setStreamStatus('connecting');
+    setRunStatus('idle');
+    setStreamError(null);
+
+    // Clear persisted per-node UI (atomWithStorage) so a failed WS does not show last run's "Completed"
+    for (const n of nodes) {
+      store.set(nodeExecutionFamily(n.id), { ...defaultNodeState, nodeId: n.id });
+    }
 
     try {
       const { data: tokenData } = await authClient.token();
       const token = tokenData?.token ?? '';
+      if (!token) {
+        setStreamStatus('error');
+        setStreamError('Not signed in — no session token for WebSocket.');
+        setRunStatus('failed');
+        return;
+      }
 
       const { runId } = await startWorkflowRun({ workflowId: wid, token });
-
       setActiveRunId(runId);
-      setLive(true);
 
       const ws = new WebSocket(runWebSocketUrl(runId, token));
       wsRef.current = ws;
@@ -74,15 +101,48 @@ export function useWorkflowRun(save: SaveFn) {
           const msg = JSON.parse(evt.data) as {
             type?: string;
             status?: string;
+            stepId?: string;
+            runId?: string;
+            logs?: string;
+            error?: string;
+            outputs?: Record<string, unknown>;
+            durationMs?: number;
+            stepRuns?: Array<{
+              stepId: string;
+              status: string;
+              logs?: string | null;
+              errorMessage?: string | null;
+              outputs?: unknown;
+              startedAt?: Date | string | null;
+              endedAt?: Date | string | null;
+            }>;
           };
+
+          if (msg.type === 'snapshot' && Array.isArray(msg.stepRuns)) {
+            for (const sr of msg.stepRuns) {
+              const durationMs = snapshotDurationMs(sr);
+              window.dispatchEvent(
+                new CustomEvent('dag:step', {
+                  detail: {
+                    stepId: sr.stepId,
+                    status: mapSnapshotStatus(sr.status),
+                    logs: sr.logs ?? undefined,
+                    error: sr.errorMessage ?? undefined,
+                    outputs: (sr.outputs as Record<string, unknown>) ?? undefined,
+                    durationMs,
+                  },
+                })
+              );
+            }
+            return;
+          }
 
           if (msg.type === 'step') {
             window.dispatchEvent(new CustomEvent('dag:step', { detail: msg }));
           } else if (msg.type === 'complete') {
             setRunStatus(msg.status === 'SUCCESS' ? 'success' : 'failed');
-            setLive(false);
+            setStreamStatus('closed');
             ws.close();
-            setRunning(false);
             wsRef.current = null;
           }
         } catch {
@@ -92,17 +152,49 @@ export function useWorkflowRun(save: SaveFn) {
 
       ws.onerror = () => {
         setRunStatus('failed');
-        setRunning(false);
-        setLive(false);
+        setStreamStatus('error');
         wsRef.current = null;
       };
+
+      ws.onclose = (ev) => {
+        if (ev.code === 1008) {
+          setStreamError(ev.reason?.trim() || 'Unauthorized');
+          setRunStatus('failed');
+          setStreamStatus('error');
+          wsRef.current = null;
+          return;
+        }
+        setStreamStatus((prev) => (prev === 'error' ? 'error' : 'closed'));
+        wsRef.current = null;
+      };
+
+      await waitForWebSocketOpen(ws);
+
+      setStreamStatus('open');
+      setRunStatus('running');
     } catch (err) {
       console.error('[useWorkflowRun]', err);
       setRunStatus('failed');
-      setRunning(false);
-      setLive(false);
+      setStreamStatus('error');
+      const base = err instanceof Error ? err.message : 'WebSocket connection failed';
+      setStreamError(
+        base === 'WebSocket connection failed' || base === 'WebSocket connection timeout'
+          ? `${base}. Typical causes: next-ws not applied (run npm install / dev), reverse proxy blocking WS upgrades, or BETTER_AUTH_URL not matching this app URL (JWT issuer).`
+          : base
+      );
+      wsRef.current = null;
     }
-  }, [workflowId, save, setRunStatus, setActiveRunId, setLive]);
+  }, [
+    workflowId,
+    nodes,
+    store,
+    save,
+    setRunStatus,
+    setActiveRunId,
+    setStreamStatus,
+    setStreamError,
+    setExecutionMonitor,
+  ]);
 
-  return { run, running };
+  return { run };
 }

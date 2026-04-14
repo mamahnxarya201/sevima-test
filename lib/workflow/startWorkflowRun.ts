@@ -16,6 +16,9 @@ export async function startWorkflowRun(params: {
   };
 
   if (!res.ok || !body.runId) {
+    if (res.status === 403) {
+      throw new Error('You do not have permission to run workflows.');
+    }
     throw new Error(body.error ?? 'Run failed');
   }
 
