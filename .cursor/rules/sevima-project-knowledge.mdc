@@ -1,0 +1,62 @@
+---
+description: Sevima-test architecture, Prisma, Jotai/React Flow pitfalls — shared agent context (no Mem0 required)
+alwaysApply: true
+---
+
+# sevima-test — shared agent knowledge
+
+## Product
+
+Multi-tenant DAG workflow editor: Next.js App Router, React Flow canvas, Better Auth, per-tenant Postgres, Docker orchestration, WebSocket run telemetry (`next-ws`).
+
+## Next.js
+
+This repo’s Next.js may differ from public docs. Before changing routing/APIs, check `node_modules/next/dist/docs/` and deprecation notices. `AGENTS.md` states the same.
+
+## Prisma (dual database)
+
+- **Management** (`prisma/management.prisma` → `lib/generated/management-client`, `MANAGEMENT_DATABASE_URL`): `Tenant`, `User`, sessions/auth. Stores each tenant’s `connectionUrl`.
+- **Tenant** (`prisma/tenant/schema.prisma` → `lib/generated/tenant-client`, migrate with `prisma/tenant/migrations/`): `Workflow`, `WorkflowVersion`, `WorkflowRun`, `StepRun`.
+- **No cross-DB FKs**: `ownerId` / `triggeredById` are string IDs from management.
+- **Runtime**: `lib/prisma/tenant.ts` — `getTenantDb(connectionUrl)` caches `PrismaClient` instances; `new PrismaClient({ datasources: { db: { url } } })`. Env `TENANT_DATABASE_URL` is for **migrations only**, not request routing.
+- **Do not** run management migrations against tenant DBs or vice versa. Old tenant DBs may need migration history repair per `README.md`.
+
+## WorkflowVersion fields
+
+- **`definition`**: Engine DAG JSON (nodes/edges for execution).
+- **`editorState`**: React Flow snapshot (positions, editor-only); not used by the executor.
+
+## Jotai + React Flow (critical)
+
+- **`nodesAtom` / `edgesAtom`** in `store/workflowStore.ts` are the **single source of truth**; the canvas controls React Flow from these atoms.
+- **Pitfall**: `useReactFlow().setNodes` / `setEdges` without updating Jotai desyncs UI, save, and drafts. Mutations (e.g. **ContextMenu**) must use **`useSetAtom(nodesAtom)` / `edgesAtom`**.
+- **`useWorkflowSave`**: Reads **`useAtomValue(nodesAtom/edgesAtom)`**, not `getNodes()` / `getEdges()`.
+- **Titles / ids**: `workflowTitleAtom`, `persistedWorkflowIdAtom` use `atomWithStorage`.
+- **`tenantIdAtom`**: From `GET /api/tenants`; **`canvasDraftScopeAtom`** = `tenantId:workflowId` when both set.
+
+## Canvas localStorage drafts (`useCanvasDraftPersistence`)
+
+- Keys: **`sevima.canvas.v1.<tenantId>.<workflowId>`**.
+- Debounced saves; **`suppressPersistRef`** blocks **`flushSave`** during hydrate only — do **not** gate **`scheduleSave`** on it, or changes while suppressing never schedule persistence. **`visibilitychange` → hidden** flushes.
+
+## Execution store
+
+- **`nodeExecutionFamily`**: `atomFamily` + per-node `atomWithStorage` for O(1) step updates.
+- **`isLiveConnectionEnabledAtom`**, **`runStatusAtom`**, **`activeRunIdAtom`**: Live run UX.
+
+## Save / run (high level)
+
+- Save: `exportCanvasToDag` + `serializeEditorState` → API (`lib/workflow/saveWorkflow.ts`), Bearer JWT.
+- Run: start run API then WebSocket to run stream; see `hooks/useWorkflowRun.ts` and `lib/workflow/startWorkflowRun.ts` for current behavior.
+
+## API security (enforced in-repo)
+
+**Mandatory checklist for any new/changed API** — see **`.cursor/rules/api-standards.mdc`** (`alwaysApply`). Follow that document so lists, auth, RBAC, rate limits, and validation stay consistent.
+
+Summary:
+
+- **JWT**: Tenant APIs use `Authorization: Bearer <jwt>` via `resolveTenantContext` (`lib/auth/tenantGuard.ts`). **`POST /api/tenants`** stays **public** (registration); **`/api/auth/*`** is public; **WebSockets** use `?token=` (JWT).
+- **RBAC** (`lib/auth/rbac.ts`, Prisma `Role` enum `ADMIN` / `EDITOR` / `VIEWER`): **VIEWER** = read-only (GET lists, GET workflow, GET run). **EDITOR** and **ADMIN** = create/update workflows, **POST** run, canvas **WS `sync`**. Enforcement: `requireEditorOrAbove` on mutating REST handlers; WS checks role before `sync`.
+- **Pagination / filtering**: **`GET /api/workflows`** supports `search`, `sort`, **`limit`** (default 20, max 100), **`offset`**; response includes **`total`**, **`limit`**, **`offset`**. UI: workflows hub uses **Load more** with the same params.
+- **Rate limiting**: In-memory fixed window (`lib/rateLimit/memory.ts`) — per-user for authenticated routes, per-IP for **`POST /api/tenants`**. Tune with **`API_RATE_LIMIT_WINDOW_MS`**, **`API_RATE_LIMIT_MAX`**, **`API_RATE_LIMIT_MUTATION_MAX`**, **`TENANT_REGISTER_RATE_LIMIT_*`**. Multi-instance deployments should add Redis/edge limits.
+- **Validation**: Zod schemas under `lib/api/schemas/*`; JSON bodies via `readJsonBody` (default **1MB** max). **`apiErrorResponse`** maps `AuthError`, `ZodError`, `RateLimitError`, and malformed/oversized bodies.

@@ -39,8 +39,6 @@ docker-compose up
 Generate the binary engines for BOTH the Host and Alpine environments:
 ```bash
 npx prisma generate --schema prisma/management.prisma
-# and the prisma client
-npx prisma generate --schema prisma/management.prisma
 npx prisma generate --schema prisma/tenant/schema.prisma
 ```
 
@@ -59,8 +57,11 @@ npm run dev
 
 Alternatively, to run the entire backend and worker orchestration purely inside the container:
 ```bash
-docker-compose up -d orchestrator-node
+docker compose up -d db
+docker compose up -d orchestrator-node
 ```
+
+The `orchestrator-node` service bind-mounts the repo at `/app` (for Dockerode + live edits) and stores **`node_modules` on a named volume** (`orchestrator_node_modules`) so installs are not slowed by the bind mount. **Next.js / Turbopack output** is stored on a separate named volume (`orchestrator_next` at `/app/.next`) so you can run `npm run dev` on the **host** and in **Docker** without permission fights over a shared `.next` folder. On startup, [`scripts/docker-orchestrator-entrypoint.sh`](scripts/docker-orchestrator-entrypoint.sh) runs **`npm ci` only** when `package.json` or `package-lock.json` is newer than `node_modules/.deps-stamp`, or on first run—otherwise it skips straight to `npm run dev`. To force a full reinstall, remove the stamp inside the container (`rm -f node_modules/.deps-stamp`) or drop the volume. To wipe the container-only Next cache: `docker volume rm sevima-test_orchestrator_next` (name may include your project directory prefix).
 
 ## Architecture Notes
 - Better Auth handles JWT persistence and injects the `tenantId` into session claims.

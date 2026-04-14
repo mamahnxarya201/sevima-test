@@ -1,0 +1,52 @@
+---
+description: Mandatory standards for every App Router API — auth, RBAC, lists, rate limits, validation (must follow for new/changed routes)
+alwaysApply: true
+---
+
+# sevima-test — API standards (mandatory)
+
+Any **new or changed** route under `app/api/**` (including WebSocket handlers in `app/api/ws/**`) **must** follow this checklist. Reuse existing helpers; do not invent parallel patterns.
+
+## Authentication
+
+- **REST (tenant data)**: Use **`resolveTenantContext(request)`** from `lib/auth/tenantGuard.ts` — requires **`Authorization: Bearer <jwt>`**, verifies JWKS, scopes **`tenantDb`** to JWT `tenantId`.
+- **Exceptions (document in route comment)**: **`/api/auth/*`** (Better Auth); **`POST /api/tenants`** (public registration) — still validate body + rate-limit by IP.
+- **WebSockets**: Browsers cannot send Bearer on upgrade — authenticate with **`?token=<jwt>`** and verify with the same JWKS/issuer/audience as `tenantGuard` (`jose` `jwtVerify`).
+
+## Role-based access (JWT `role` claim)
+
+- Roles: **`ADMIN`**, **`EDITOR`**, **`VIEWER`** (see `lib/auth/rbac.ts`, Prisma `Role` enum).
+- **`normalizeRole`** is applied in `resolveTenantContext`; use **`requireEditorOrAbove(ctx.role)`** for any **mutation** (POST/PATCH/DELETE that changes tenant data), **POST** run, and **WS** messages that persist state (e.g. `sync`).
+- **`requireAdmin(role)`** for tenant-admin-only operations (use when adding such routes).
+- **VIEWER**: allowed for **read** endpoints (GET lists, GET by id, read-only WS) unless you explicitly document a stricter rule.
+
+## List endpoints (GET that return collections)
+
+- **Pagination**: Support **`limit`** (cap e.g. 100) and **`offset`** or **cursor**; never return an unbounded full table for large datasets.
+- **Filtering / sort**: Expose safe query params; validate with **Zod** (see `lib/api/schemas/`).
+- **Response shape**: Include **`total`** (count) when using offset/limit, plus **`limit`** and **`offset`** (or `nextCursor`) so clients can page.
+
+## Rate limiting
+
+- Call **`enforceRateLimit(key, limit, windowMs)`** from `lib/rateLimit/memory.ts` (or a future shared store).
+- **Authenticated routes**: key by **`userId`** + route class (e.g. `workflows:get:${userId}`).
+- **Public / unauthenticated routes** (e.g. `POST /api/tenants`): key by **`getClientIp(request)`** from `lib/api/clientIp.ts`.
+- Respect env tunables: `API_RATE_LIMIT_*`, `TENANT_REGISTER_RATE_LIMIT_*`. Document new env vars if you add categories.
+
+## Input validation and payloads
+
+- **JSON bodies**: Parse with **`readJsonBody(request)`** from `lib/api/jsonBody.ts` (size limit; throws mapped by **`apiErrorResponse`**).
+- **Schemas**: Add or extend **Zod** schemas under **`lib/api/schemas/`**; use **`.strict()`** on objects when rejecting unknown fields is appropriate.
+- **Path params** (ids): Validate **UUID** (or your real id format) with Zod before queries — see `uuidParamSchema` / `workflowIdParamSchema` in `lib/api/schemas/workflow.ts`.
+- **Errors**: Return via **`apiErrorResponse`** / **`authErrorResponse`** from `lib/api/respond.ts` (re-exported from `tenantGuard` as needed) so **`AuthError`**, **`ZodError`**, **`RateLimitError`**, and body errors are handled consistently.
+
+## Security notes
+
+- Prefer **Prisma** parameterized queries; avoid string-concatenated SQL except where already isolated (e.g. controlled DDL with sanitized identifiers).
+- Do not log JWT payloads or secrets in production.
+- New **public** endpoints are rare — if added, they **must** have rate limiting and strict validation.
+
+## References
+
+- Implementation examples: `app/api/workflows/route.ts`, `app/api/tenants/route.ts`, `app/api/ws/workflows/[id]/route.ts`.
+- Project context: `.cursor/rules/sevima-project-knowledge.mdc` (architecture).
