@@ -18,7 +18,8 @@ import type { DagNode, DagSchema } from './types';
 
 const HttpConfigSchema = z.object({
   method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
-  url: z.string().url('http.url must be a valid URL'),
+  /** Allow templates like `input.statusCode` — validated at runtime after interpolation */
+  url: z.string().min(1, 'http.url is required'),
   headers: z.record(z.string(), z.string()).optional(),
   cookies: z.string().optional(),
   body: z.union([z.record(z.string(), z.unknown()), z.string()]).optional(),

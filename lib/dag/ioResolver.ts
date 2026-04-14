@@ -63,6 +63,51 @@ export function resolveInputs(
  * @param outputs  Declared output field names from the DAG node
  * @returns        Parsed output fields as a plain object
  */
+/**
+ * Parse curl stdout from HTTP_CALL: response body followed by a final line
+ * `{"__statusCode__": <n>}` from curl `-w`. Without this, only the status line
+ * was JSON-parsed and the body was lost.
+ */
+export function parseHttpCallOutputs(
+  logs: string,
+  declaredOutputs?: string[]
+): Record<string, unknown> {
+  const lines = logs.trimEnd().split('\n');
+  const lastLine = lines[lines.length - 1]?.trim() ?? '';
+  let statusCode = 0;
+  let responseText = logs.trimEnd();
+
+  try {
+    const last = JSON.parse(lastLine) as { __statusCode__?: number };
+    if (last && typeof last === 'object' && typeof last.__statusCode__ === 'number') {
+      statusCode = last.__statusCode__;
+      responseText = lines.length > 1 ? lines.slice(0, -1).join('\n') : '';
+    }
+  } catch {
+    /* entire log is body */
+  }
+
+  let body: unknown = responseText.trim();
+  if (body !== '') {
+    try {
+      body = JSON.parse(String(body));
+    } catch {
+      /* keep as string */
+    }
+  } else {
+    body = '';
+  }
+
+  const full: Record<string, unknown> = { statusCode, body };
+
+  if (!declaredOutputs?.length) return full;
+  const result: Record<string, unknown> = {};
+  for (const field of declaredOutputs) {
+    if (field in full) result[field] = full[field];
+  }
+  return result;
+}
+
 export function parseNodeOutputs(
   stdout: string,
   outputs: string[] | undefined

@@ -138,6 +138,8 @@ export interface StepEvent {
   logs?: string;
   error?: string;
   outputs?: Record<string, unknown>;
+  /** From dockerRunner / container `durationMs` */
+  durationMs?: number;
 }
 
 export interface RunCompleteEvent {
