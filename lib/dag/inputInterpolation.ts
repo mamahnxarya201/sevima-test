@@ -1,12 +1,22 @@
 /**
  * Merge upstream node outputs and substitute `input.field` / `input.nested.path`
  * in HTTP config and scripts before Docker runs.
+ *
+ * Human-readable guide: `docs/workflow-node-input.md`.
  */
 
 import type { DagEdge, DagNode, HttpConfig } from './types';
 import type { RunContext } from './types';
 
-/** Direct predecessors (edges pointing to this node), merged left → right (sorted by from-id). */
+/**
+ * Direct predecessors (edges pointing to this node), merged in sorted predecessor order.
+ *
+ * Each upstream node's outputs are available in two ways:
+ * - **Namespaced:** `input.<upstreamNodeId>.<field>` — e.g. `input.fetch_quote.statusCode`
+ *   (use bracket form if the id has characters that are not valid in `input.foo.bar`: `input['uuid-here'].statusCode`).
+ * - **Flat (compat):** fields are also merged at the top level, last predecessor wins on key collision
+ *   — e.g. `input.statusCode` when only one HTTP upstream exists.
+ */
 export function mergeUpstreamOutputs(
   nodeId: string,
   edges: DagEdge[],
@@ -20,7 +30,9 @@ export function mergeUpstreamOutputs(
   for (const pid of preds) {
     const chunk = runContext[pid];
     if (chunk && typeof chunk === 'object' && !Array.isArray(chunk)) {
-      Object.assign(out, chunk as Record<string, unknown>);
+      const c = chunk as Record<string, unknown>;
+      out[pid] = c;
+      Object.assign(out, c);
     }
   }
   return out;

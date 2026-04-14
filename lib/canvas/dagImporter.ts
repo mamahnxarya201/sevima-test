@@ -33,6 +33,8 @@ function dagNodeToRfData(n: DagNode): Record<string, unknown> {
     inputs: n.inputs,
     outputs: n.outputs,
   };
+  if (n.title !== undefined) data.title = n.title;
+  if (n.description !== undefined) data.description = n.description;
   if (n.http) data.http = n.http;
   if (n.script !== undefined) data.script = n.script;
   if (n.runtime !== undefined) data.runtime = n.runtime;

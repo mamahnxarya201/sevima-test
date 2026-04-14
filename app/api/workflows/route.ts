@@ -71,22 +71,31 @@ export async function GET(request: NextRequest) {
     if (workflows.length > 0) {
       const ids = workflows.map((w) => w.id);
       runStats = await ctx.tenantDb.$queryRaw<WorkflowRunStatRow[]>`
-        WITH base AS (
-          SELECT wv."workflowId" AS wid,
-                 wr.status::text AS status,
-                 wr."startedAt" AS started_at,
-                 (COUNT(*) OVER (PARTITION BY wv."workflowId"))::int AS run_count,
-                 ROW_NUMBER() OVER (
-                   PARTITION BY wv."workflowId"
-                   ORDER BY wr."startedAt" DESC NULLS LAST, wr.id DESC
-                 ) AS rn
-          FROM "WorkflowRun" wr
-          INNER JOIN "WorkflowVersion" wv ON wr."workflowVersionId" = wv.id
-          WHERE wv."workflowId" IN (${Prisma.join(ids)})
+        WITH selected AS (
+          SELECT unnest(ARRAY[${Prisma.join(ids)}]::text[]) AS wid
         )
-        SELECT wid, run_count, status AS last_run_status, started_at AS last_run_at
-        FROM base
-        WHERE rn = 1
+        SELECT
+          s.wid,
+          COALESCE(c.run_count, 0)::int AS run_count,
+          l.last_run_status,
+          l.last_run_at
+        FROM selected s
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*)::int AS run_count
+          FROM "WorkflowVersion" wv
+          INNER JOIN "WorkflowRun" wr ON wr."workflowVersionId" = wv.id
+          WHERE wv."workflowId" = s.wid
+        ) c ON true
+        LEFT JOIN LATERAL (
+          SELECT
+            wr.status::text AS last_run_status,
+            wr."startedAt" AS last_run_at
+          FROM "WorkflowVersion" wv
+          INNER JOIN "WorkflowRun" wr ON wr."workflowVersionId" = wv.id
+          WHERE wv."workflowId" = s.wid
+          ORDER BY wr."startedAt" DESC NULLS LAST, wr.id DESC
+          LIMIT 1
+        ) l ON true
       `;
     }
 

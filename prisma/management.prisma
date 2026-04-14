@@ -87,6 +87,29 @@ model jwks {
   expiresAt  DateTime?
 }
 
+// ─────────────────────────────────────────────
+// SCHEDULED WORKFLOW TRIGGERS (pg_cron)
+// ─────────────────────────────────────────────
+
+model WorkflowSchedule {
+  id          String  @id @default(uuid())
+  /// Tenant that owns the workflow (FK-less, cross-DB)
+  tenantId    String
+  /// Workflow ID in the tenant DB (FK-less, cross-DB)
+  workflowId  String
+  /// Standard cron expression (5-field)
+  cronExpr    String
+  enabled     Boolean @default(true)
+  /// pg_cron job ID returned by cron.schedule(); null until synced
+  pgCronJobId Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, workflowId])
+  @@index([enabled])
+}
+
 enum Role {
   ADMIN
   EDITOR

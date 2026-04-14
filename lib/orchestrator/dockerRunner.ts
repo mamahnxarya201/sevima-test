@@ -7,6 +7,10 @@
  * For HTTP_CALL nodes, builds a curl command from the HttpConfig block.
  * For SCRIPT_EXECUTION, selects the right default image based on 'runtime'.
  * Always cleans up containers immediately after completion (force remove).
+ *
+ * CONDITION nodes run with NetworkDisabled and a validation wrapper that
+ * enforces { result: boolean } output. Container-level timeout kills hung
+ * containers and returns exit code 124.
  */
 
 import Dockerode from 'dockerode';
@@ -16,10 +20,21 @@ const docker = new Dockerode({
   socketPath: process.env.DOCKER_HOST?.replace('unix://', '') ?? '/var/run/docker.sock',
 });
 
+/** Default container timeout: 5 minutes. Overridden by AbortSignal from the engine. */
+const DEFAULT_CONTAINER_TIMEOUT_MS = 300_000;
+
 export interface StepResult {
   exitCode: number;
   logs: string;
   durationMs: number;
+}
+
+export interface RunNodeOptions {
+  mergedInput?: Record<string, unknown>;
+  /** AbortSignal from the engine's global workflow timeout. */
+  signal?: AbortSignal;
+  /** Per-step timeout in ms (falls back to DEFAULT_CONTAINER_TIMEOUT_MS). */
+  stepTimeoutMs?: number;
 }
 
 // ─────────────────────────────────────────────
@@ -167,6 +182,43 @@ async function collectLogs(container: Dockerode.Container): Promise<string> {
 }
 
 // ─────────────────────────────────────────────
+// CONDITION node wrapper: validates { result: boolean }
+// ─────────────────────────────────────────────
+
+function wrapConditionScript(userScript: string, hasInput: boolean): string {
+  const inputLine = hasInput
+    ? "const input = JSON.parse(process.env.DAG_MERGED_INPUT_JSON || '{}');\n"
+    : '';
+  // The wrapper intercepts console.log to capture the last call,
+  // then validates the output is { result: true|false }.
+  return `
+${inputLine}const __origLog = console.log;
+let __lastOutput = null;
+console.log = (...args) => { __lastOutput = args[0]; __origLog.apply(console, args); };
+try {
+${userScript}
+} catch (__e) {
+  process.stderr.write('Condition script error: ' + (__e && __e.message ? __e.message : String(__e)) + '\\n');
+  process.exit(2);
+}
+try {
+  const __parsed = JSON.parse(__lastOutput);
+  if (typeof __parsed !== 'object' || __parsed === null || typeof __parsed.result !== 'boolean') {
+    process.stderr.write('Condition must output { "result": true } or { "result": false }\\n');
+    process.exit(3);
+  }
+} catch (__pe) {
+  if (__lastOutput === null) {
+    process.stderr.write('Condition script produced no output. Expected: console.log(JSON.stringify({ result: true|false }))\\n');
+  } else {
+    process.stderr.write('Condition output is not valid JSON: ' + String(__lastOutput).slice(0, 200) + '\\n');
+  }
+  process.exit(3);
+}
+`.trim();
+}
+
+// ─────────────────────────────────────────────
 // Main: run a single DAG node in Docker
 // ─────────────────────────────────────────────
 
@@ -178,16 +230,17 @@ const PYTHON_INPUT_PRELUDE =
 export async function runNode(
   node: DagNode,
   env: string[],
-  options?: { mergedInput?: Record<string, unknown> }
+  options?: RunNodeOptions,
 ): Promise<StepResult> {
   const image = resolveImage(node);
 
   const containerEnv = [...env];
+  const hasInput = options?.mergedInput !== undefined;
   if (
-    options?.mergedInput !== undefined &&
+    hasInput &&
     (node.type === 'SCRIPT_EXECUTION' || node.type === 'CONDITION')
   ) {
-    containerEnv.push(`DAG_MERGED_INPUT_JSON=${JSON.stringify(options.mergedInput)}`);
+    containerEnv.push(`DAG_MERGED_INPUT_JSON=${JSON.stringify(options!.mergedInput)}`);
   }
 
   // HTTP_CALL: `curlimages/curl` ENTRYPOINT is `curl` — Cmd is only curl flags + URL (no shell).
@@ -204,18 +257,20 @@ export async function runNode(
         durationMs: 0,
       };
     }
+  } else if (node.type === 'CONDITION') {
+    const userScript = node.script ?? 'console.log(JSON.stringify({ result: true }));';
+    const wrapped = wrapConditionScript(userScript, hasInput);
+    cmd = ['node', '-e', wrapped];
   } else {
     let script = node.script ?? 'echo "no script defined"';
-    const injectInput =
-      options?.mergedInput !== undefined &&
-      (node.type === 'SCRIPT_EXECUTION' || node.type === 'CONDITION');
+    const injectInput = hasInput && node.type === 'SCRIPT_EXECUTION';
 
     if (node.type === 'SCRIPT_EXECUTION' && node.runtime === 'python') {
       if (injectInput) {
         script = PYTHON_INPUT_PRELUDE + script;
       }
       cmd = ['python3', '-c', script];
-    } else if ((node.type === 'SCRIPT_EXECUTION' && node.runtime === 'node') || node.type === 'CONDITION') {
+    } else if (node.type === 'SCRIPT_EXECUTION' && node.runtime === 'node') {
       if (injectInput) {
         script = NODE_INPUT_PRELUDE + script;
       }
@@ -245,6 +300,8 @@ export async function runNode(
 
   const startTime = Date.now();
 
+  const networkDisabled = node.type === 'CONDITION';
+
   const container = await docker.createContainer({
     Image: image,
     ...(entrypoint !== undefined ? { Entrypoint: entrypoint } : {}),
@@ -252,26 +309,75 @@ export async function runNode(
     Env: containerEnv,
     AttachStdout: true,
     AttachStderr: true,
+    NetworkDisabled: networkDisabled,
     HostConfig: {
       Memory: parseMemBytes(memLimit),
       CpuPeriod: 100000,
       CpuQuota: Math.floor(cpuFraction * 100000),
-      AutoRemove: false, // we manually remove after log collection
+      AutoRemove: false,
     },
   });
 
   await container.start();
-  const waitResult = await container.wait();
-  const exitCode: number = waitResult.StatusCode;
 
-  const logs = await collectLogs(container);
+  // Race container.wait() against a timeout + optional AbortSignal
+  const stepTimeout = options?.stepTimeoutMs ?? DEFAULT_CONTAINER_TIMEOUT_MS;
+  let timedOut = false;
+
+  const waitWithTimeout = async (): Promise<number> => {
+    return new Promise<number>((resolve, reject) => {
+      let settled = false;
+
+      const timer = setTimeout(async () => {
+        if (settled) return;
+        settled = true;
+        timedOut = true;
+        try { await container.kill(); } catch { /* already dead */ }
+        resolve(124);
+      }, stepTimeout);
+
+      const onAbort = async () => {
+        if (settled) return;
+        settled = true;
+        timedOut = true;
+        clearTimeout(timer);
+        try { await container.kill(); } catch { /* already dead */ }
+        resolve(124);
+      };
+
+      options?.signal?.addEventListener('abort', onAbort, { once: true });
+
+      container.wait().then((r) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        options?.signal?.removeEventListener('abort', onAbort);
+        resolve(r.StatusCode);
+      }).catch((err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        options?.signal?.removeEventListener('abort', onAbort);
+        reject(err);
+      });
+    });
+  };
+
+  const exitCode = await waitWithTimeout();
+  let logs = await collectLogs(container);
   const durationMs = Date.now() - startTime;
 
-  // Always force-remove the container
+  if (timedOut) {
+    const reason = options?.signal?.aborted
+      ? `[TIMEOUT] Step killed — workflow exceeded global timeout`
+      : `[TIMEOUT] Step killed after ${Math.round(stepTimeout / 1000)}s container timeout`;
+    logs = logs ? `${logs}\n${reason}\n` : `${reason}\n`;
+  }
+
   try {
     await container.remove({ force: true });
   } catch {
-    // Ignore removal errors — container may have already been removed
+    // container may have already been removed
   }
 
   return { exitCode, logs, durationMs };

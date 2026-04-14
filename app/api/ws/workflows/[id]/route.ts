@@ -1,5 +1,5 @@
-import { WebSocket } from 'ws';
-import type { IncomingMessage } from 'http';
+import type { WebSocket, WebSocketServer } from 'ws';
+import type { NextRequest } from 'next/server';
 import { validateDag } from '@/lib/dag/validator';
 import { updateWorkflow } from '@/lib/prisma/workflow';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
@@ -14,14 +14,13 @@ export function GET() {
   return new Response('WebSocket endpoint', { status: 426 });
 }
 
-export async function SOCKET(
+export async function UPGRADE(
   client: WebSocket,
-  request: IncomingMessage,
-  _server: unknown
+  _server: WebSocketServer,
+  request: NextRequest,
 ) {
-  const url = new URL(request.url ?? '', `http://${request.headers.host}`);
-  const token = url.searchParams.get('token');
-  const workflowId = url.pathname.split('/').pop();
+  const token = request.nextUrl.searchParams.get('token');
+  const workflowId = request.nextUrl.pathname.split('/').pop();
 
   if (!token || !workflowId) {
     client.close(1008, 'Missing token or workflowId');

@@ -3,6 +3,7 @@
 A modern, production-ready Distributed Acyclic Graph (DAG) workflow engine with native multi-tenancy, isolated sandbox execution, and real-time execution monitoring. 
 
 ## Features
+
 - **True Multi-Tenancy**: Built on a dual-schema strategy using Prisma. A central Management DB tracks tenants and provisions fully isolated individual Postgres databases per workspace automatically upon registration.
 - **Workflow Orchestrator**: Uses Dockerode to dynamically spin up short-lived Alpine Linux containers for running parallel HTTP & Scripting workloads.
 - **Real-Time Telemetry**: Execution logs block-streamed directly to the frontend React Flow UI in real-time leveraging `next-ws` and an in-memory event bus.
@@ -11,59 +12,179 @@ A modern, production-ready Distributed Acyclic Graph (DAG) workflow engine with 
 ## Getting Started
 
 ### Prerequisites
-- Node.js `20+`
-- Docker or Podman
-- PostgreSQL
+
+- **Node.js 20+** and **npm**
+- **Docker** or **Podman** (with Compose)
 
 ### 1. Configure the Environment
-Ensure your `.env` file matches the `docker-compose.yaml` topology. 
-By default, the `.env` should look like this (enabling local host resolution to the DB):
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set at minimum:
 
 ```env
-MANAGEMENT_DATABASE_URL="postgresql://user:password@localhost:5432/management_db"
-TENANT_DATABASE_URL="postgresql://user:password@localhost:5432/default_tenant_db"
-DATABASE_URL="postgresql://user:password@localhost:5432/management_db"
-PORT=3000
-DOCKER_HOST="unix:///var/run/docker.sock"
-BETTER_AUTH_SECRET="your-secret"
-BETTER_AUTH_URL="http://localhost:3000"
+BETTER_AUTH_SECRET="change-me-in-production"
+DOCKER_HOST_PATH="/run/user/1000/podman/podman.sock"   # or /var/run/docker.sock for Docker
 ```
 
-### 2. Stand up Infrastructure
-Spin up the `postgres` core container:
+The DB URLs default to `localhost:5432` so host-side Prisma commands work against the Docker Postgres. The app container gets its own internal URLs automatically from `docker-compose.yaml`.
+
+See `.env.example` for all available variables (ports, Grafana credentials, rate-limit tunables, etc.).
+
+### 2. Start Postgres
+
 ```bash
-docker-compose up
+docker compose up -d postgres
 ```
 
-### 3. Generate & Migrate schemas
-Generate the binary engines for BOTH the Host and Alpine environments:
+Wait until healthy (the healthcheck runs every 5 s):
+
 ```bash
+docker compose ps postgres
+```
+
+### 3. Install Dependencies, Generate Clients, and Migrate
+
+```bash
+npm install
+
 npx prisma generate --schema prisma/management.prisma
 npx prisma generate --schema prisma/tenant/schema.prisma
+
+npx prisma migrate deploy --schema prisma/management.prisma
+npx prisma migrate deploy --schema prisma/tenant/schema.prisma
 ```
 
+This creates the Prisma clients (with both native and Alpine binary targets) and applies all migration files to the Postgres instance running in Docker.
 
-Tenant migrations live under **`prisma/tenant/migrations/`** (schema: `prisma/tenant/schema.prisma`). Do **not** point `migrate deploy` at `prisma/management.prisma` for tenant DBs — the root `prisma/migrations/` folder is for the management database only.
+### 4. Build and Launch the Full Stack
 
-**Tenant DBs created before the split:** if `migrate deploy` reports migration history drift, connect to that tenant database and run `DROP TABLE IF EXISTS "_prisma_migrations";`, then `npm run migrate:tenants` (or register a new tenant).
-
-*(Note: Ensure you respond to any drop-column prompts if you change schemas manually! Or use `npx prisma db push --schema prisma/management.prisma` for force resets).*
-
-### 4. Running the Engine
-For rapid UI development and local debugging:
 ```bash
-npm run dev
+docker compose up --build -d
 ```
 
-Alternatively, to run the entire backend and worker orchestration purely inside the container:
+
+| Service    | URL                                            | Env var for port  |
+| ---------- | ---------------------------------------------- | ----------------- |
+| App        | [http://localhost:3000](http://localhost:3000) | `APP_PORT`        |
+| Grafana    | [http://localhost:3001](http://localhost:3001) | `GRAFANA_PORT`    |
+| Prometheus | [http://localhost:9090](http://localhost:9090) | `PROMETHEUS_PORT` |
+| Loki       | — (internal)                                   | `LOKI_PORT`       |
+
+
+What happens on start:
+
+1. **Postgres** is already running and migrated.
+2. **App** waits for a healthy Postgres, runs `prisma migrate deploy` again (no-op since schemas are current), then starts the Next.js server.
+3. **Prometheus** scrapes `/api/metrics` from the app container.
+4. **Loki** receives execution logs pushed by the app.
+5. **Grafana** waits for a healthy app, fetches JWKS for JWT auth, then starts with provisioned dashboards and datasources.
+
+The host container runtime socket is mounted into the app container (`DOCKER_HOST_PATH`) so the workflow orchestrator can spin up execution containers.
+
+### 5. Register Your First Tenant
+
+1. Open [http://localhost:3000/register](http://localhost:3000/register) and create your tenant.
+  - This provisions an isolated tenant database and creates the first `ADMIN` user automatically.
+2. To add more users (`EDITOR` or `VIEWER`), use the helper script:
+
 ```bash
-docker compose up -d db
-docker compose up -d orchestrator-node
+./scripts/docker-run.sh npm run seed:rbac -- --tenant "tenant-name" --role EDITOR
 ```
 
-The `orchestrator-node` service bind-mounts the repo at `/app` (for Dockerode + live edits) and stores **`node_modules` on a named volume** (`orchestrator_node_modules`) so installs are not slowed by the bind mount. **Next.js / Turbopack output** is stored on a separate named volume (`orchestrator_next` at `/app/.next`) so you can run `npm run dev` on the **host** and in **Docker** without permission fights over a shared `.next` folder. On startup, [`scripts/docker-orchestrator-entrypoint.sh`](scripts/docker-orchestrator-entrypoint.sh) runs **`npm ci` only** when `package.json` or `package-lock.json` is newer than `node_modules/.deps-stamp`, or on first run—otherwise it skips straight to `npm run dev`. To force a full reinstall, remove the stamp inside the container (`rm -f node_modules/.deps-stamp`) or drop the volume. To wipe the container-only Next cache: `docker volume rm sevima-test_orchestrator_next` (name may include your project directory prefix).
+Optional flags:
+
+- `--email "editor@your-domain.com"`
+- `--name "Editor User"`
+- `--password "StrongPassword123!"`
+
+The script resolves tenant by **name** (not id). RBAC behavior:
+
+- `ADMIN` / `EDITOR`: can create/update workflows and trigger runs.
+- `VIEWER`: read-only access.
+
+### 6. Running Commands in the Container
+
+Use `scripts/docker-run.sh` to execute commands inside the running app container:
+
+```bash
+./scripts/docker-run.sh <command> [args...]
+```
+
+The first argument (`npm`, `npx`, `node`) is forwarded directly. Anything else runs as a raw shell command. No arguments opens an interactive shell.
+
+```bash
+# Migrations
+./scripts/docker-run.sh npm run migrate:tenants
+./scripts/docker-run.sh npx prisma migrate deploy --schema prisma/management.prisma
+./scripts/docker-run.sh npx prisma migrate deploy --schema prisma/tenant/schema.prisma
+
+# RBAC seed
+./scripts/docker-run.sh npm run seed:rbac -- --tenant "name" --role EDITOR
+
+# Force-push schema (use with care)
+./scripts/docker-run.sh npx prisma db push --schema prisma/management.prisma
+
+# Interactive shell
+./scripts/docker-run.sh
+```
+
+### 7. Useful Docker Compose Commands
+
+```bash
+# View logs (follow)
+docker compose logs -f app
+
+# Restart a single service
+docker compose restart app
+
+# Rebuild after code changes
+docker compose up --build -d app
+
+# Stop everything
+docker compose down
+
+# Stop and wipe all data volumes
+docker compose down -v
+```
+
+## Schema Migration Notes
+
+The app entrypoint runs `prisma migrate deploy` on every container start (safe — already-applied migrations are skipped). For manual operations:
+
+- Tenant migrations live under `prisma/tenant/migrations/` (schema: `prisma/tenant/schema.prisma`). Do **not** point `migrate deploy` at `prisma/management.prisma` for tenant DBs.
+- **Tenant DBs created before the schema split:** if `migrate deploy` reports drift, connect to that tenant database and run `DROP TABLE IF EXISTS "_prisma_migrations";`, then `./scripts/docker-run.sh npm run migrate:tenants`.
+- Force-reset a schema: `./scripts/docker-run.sh npx prisma db push --schema prisma/management.prisma`
+
+## Testing
+
+Tests run on the host (dev dependencies are not in the production image).
+
+### Unit tests
+
+- Run once: `npm run test:unit`
+- Watch mode: `npm run test:unit:watch`
+- Coverage: `npm run test:coverage`
+
+Unit tests use Vitest + Testing Library with strict setup/teardown:
+
+- `beforeAll`: starts MSW server
+- `afterEach`: DOM cleanup, mock/timer reset, MSW handler reset, storage clear
+- `afterAll`: closes MSW server
+
+### E2E tests
+
+- Run: `npm run test:e2e`
+- Headed mode: `npm run test:e2e:headed`
+- CI-managed web server: `npm run test:e2e:ci`
+
+For real login flow, set `E2E_EMAIL` and `E2E_PASSWORD`. If missing, credentialed login tests are skipped.
 
 ## Architecture Notes
+
 - Better Auth handles JWT persistence and injects the `tenantId` into session claims.
 - The `tenantGuard` intercepts incoming requests, validates the Better Auth cookie/token, and overrides the Prisma runtime adapter strictly connecting to the correct DB proxy. 
 - You can find the DAG schema format stored inside `lib/dag/types.ts`.
+

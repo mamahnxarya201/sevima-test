@@ -13,13 +13,13 @@
  *   { type: 'snapshot', stepRuns: StepRun[] }   ← initial state on connect
  */
 
-import type { IncomingMessage } from 'http';
 import type { WebSocket, WebSocketServer } from 'ws';
+import type { NextRequest } from 'next/server';
 import { jwtVerify, createRemoteJWKSet } from 'jose';
 import { managementDb } from '@/lib/prisma/management';
 import { getTenantDb } from '@/lib/prisma/tenant';
-import { onStepEvent, onRunComplete } from '@/lib/socket/eventBus';
-import { runWorkflow } from '@/lib/orchestrator/executionEngine';
+import { onStepEvent, onRunComplete, onWorkflowRetry } from '@/lib/socket/eventBus';
+import { runWorkflowWithRetries } from '@/lib/orchestrator/executionEngine';
 import type { DagSchema } from '@/lib/dag/types';
 
 const BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3000';
@@ -32,14 +32,13 @@ export function GET() {
   return new Response('WebSocket endpoint', { status: 426 });
 }
 
-export async function SOCKET(
+export async function UPGRADE(
   client: WebSocket,
-  request: IncomingMessage,
-  _server: WebSocketServer
+  _server: WebSocketServer,
+  request: NextRequest,
 ) {
-  const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
-  const runId = url.pathname.split('/').pop() ?? '';
-  const token = url.searchParams.get('token') ?? '';
+  const runId = request.nextUrl.pathname.split('/').pop() ?? '';
+  const token = request.nextUrl.searchParams.get('token') ?? '';
 
   // ── Auth ─────────────────────────────────────────────────────────
   let tenantId: string;
@@ -59,37 +58,44 @@ export async function SOCKET(
   // ── Resolve tenant DB ─────────────────────────────────────────────
   const tenant = await managementDb.tenant.findUnique({
     where: { id: tenantId },
-    select: { connectionUrl: true },
+    select: { connectionUrl: true, status: true },
   });
-  if (!tenant) {
-    client.close(1008, 'Tenant not found');
+  if (!tenant || tenant.status !== 'ACTIVE') {
+    client.close(1008, !tenant ? 'Tenant not found' : 'Tenant inactive');
     return;
   }
   const tenantDb = getTenantDb(tenant.connectionUrl);
 
-  // ── Start engine once: first authenticated WS connection for a PENDING run ──
-  if (!engineStartedRunIds.has(runId)) {
-    engineStartedRunIds.add(runId);
-    try {
-      const run = await tenantDb.workflowRun.findUnique({
-        where: { id: runId },
-        include: {
-          workflowVersion: { select: { definition: true } },
-        },
-      });
-      if (run?.status === 'PENDING' && run.workflowVersion?.definition) {
-        const definition = run.workflowVersion.definition as unknown as DagSchema;
-        void runWorkflow(runId, definition, tenantDb).catch((err) => {
-          console.error(`[ws/run ${runId}] runWorkflow:`, err);
-        });
-      }
-    } catch (e) {
-      console.error('[ws/run] Failed to start workflow:', e);
-      engineStartedRunIds.delete(runId);
+  const send = (data: object) => {
+    if (client.readyState === 1 /* OPEN */) {
+      client.send(JSON.stringify(data));
     }
-  }
+  };
 
-  // ── Send snapshot of current step states ─────────────────────────
+  // ── Subscribe BEFORE starting the engine — fast validation failures emit
+  // `complete` synchronously; listeners must be registered first or the client
+  // never receives error details (race).
+  const unsubs: (() => void)[] = [];
+
+  const subscribeToRun = (rid: string) => {
+    unsubs.push(onStepEvent(rid, (event) => send({ type: 'step', ...event })));
+    unsubs.push(onRunComplete(rid, (event) => send({ type: 'complete', ...event })));
+  };
+
+  subscribeToRun(runId);
+
+  unsubs.push(
+    onWorkflowRetry(runId, (event) => {
+      send({ type: 'workflow_retry', ...event });
+      subscribeToRun(event.newRunId);
+    }),
+  );
+
+  client.on('close', () => {
+    for (const unsub of unsubs) unsub();
+  });
+
+  // ── Snapshot of current step states (may be empty if engine has not written rows yet)
   try {
     const stepRuns = await tenantDb.stepRun.findMany({
       where: { runId },
@@ -100,18 +106,40 @@ export async function SOCKET(
     // non-fatal — run may not have started yet
   }
 
-  const send = (data: object) => {
-    if (client.readyState === 1 /* OPEN */) {
-      client.send(JSON.stringify(data));
+  // ── Start engine once: first authenticated WS connection for a PENDING run ──
+  if (!engineStartedRunIds.has(runId)) {
+    engineStartedRunIds.add(runId);
+    try {
+      const run = await tenantDb.workflowRun.findUnique({
+        where: { id: runId },
+        include: {
+          workflowVersion: {
+            select: {
+              id: true,
+              definition: true,
+              workflow: { select: { settings: true } },
+            },
+          },
+        },
+      });
+      if (run?.status === 'PENDING' && run.workflowVersion?.definition) {
+        const definition = run.workflowVersion.definition as unknown as DagSchema;
+        const settings = run.workflowVersion.workflow?.settings;
+        void runWorkflowWithRetries(
+          runId,
+          run.workflowVersion.id,
+          definition,
+          tenantDb,
+          tenantId,
+          settings,
+          run.triggeredById ?? undefined,
+        ).catch((err) => {
+          console.error(`[ws/run ${runId}] runWorkflowWithRetries:`, err);
+        });
+      }
+    } catch (e) {
+      console.error('[ws/run] Failed to start workflow:', e);
+      engineStartedRunIds.delete(runId);
     }
-  };
-
-  // ── Subscribe to live events ──────────────────────────────────────
-  const unsubStep = onStepEvent(runId, (event) => send({ type: 'step', ...event }));
-  const unsubComplete = onRunComplete(runId, (event) => send({ type: 'complete', ...event }));
-
-  client.on('close', () => {
-    unsubStep();
-    unsubComplete();
-  });
+  }
 }

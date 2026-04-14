@@ -52,6 +52,11 @@ export interface DagNode {
   id: string;
   type: NodeType;
 
+  /** Canvas / editor label (optional; ignored by executor, stored in definition for humans & AI) */
+  title?: string;
+  /** Canvas / editor description (optional; ignored by executor) */
+  description?: string;
+
   /** Docker image to pull and run */
   image?: string;
 
@@ -134,7 +139,7 @@ export type RunContext = Record<string, Record<string, unknown>>;
 export interface StepEvent {
   runId: string;
   stepId: string;
-  status: 'RUNNING' | 'SUCCESS' | 'FAILED' | 'RETRYING';
+  status: 'RUNNING' | 'SUCCESS' | 'FAILED' | 'RETRYING' | 'TIMEOUT';
   logs?: string;
   error?: string;
   outputs?: Record<string, unknown>;
@@ -144,6 +149,21 @@ export interface StepEvent {
 
 export interface RunCompleteEvent {
   runId: string;
-  status: 'SUCCESS' | 'FAILED';
+  status: 'SUCCESS' | 'FAILED' | 'TIMEOUT';
   durationMs: number;
+  /** Present when status is FAILED/TIMEOUT — e.g. validation errors or thrown engine message */
+  error?: string;
+}
+
+/** Emitted when the engine creates a new WorkflowRun as a retry of a failed run. */
+export interface WorkflowRetryEvent {
+  /** The original run that the WS client initially subscribed to. */
+  originalRunId: string;
+  /** The failed run that triggered this retry. */
+  failedRunId: string;
+  /** The new run created for the retry attempt. */
+  newRunId: string;
+  /** 1-based retry attempt number. */
+  attempt: number;
+  maxAttempts: number;
 }

@@ -14,6 +14,8 @@ export type WorkflowRunListItem = {
   startedAt: string | null;
   endedAt: string | null;
   duration: number | null;
+  /** Present when the run failed at engine level (e.g. DAG validation) before step rows exist */
+  errorMessage?: string | null;
   workflowVersion: { versionNumber: number };
   stepRuns: WorkflowRunStepSnapshot[];
 };
