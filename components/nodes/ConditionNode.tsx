@@ -1,8 +1,22 @@
 import React from 'react';
 import { Handle, Position } from '@xyflow/react';
+import { useAtomValue } from 'jotai';
 import { BaseNode } from './BaseNode';
+import { nodeExecutionFamily } from '@/store/executionStore';
+
+function parseConditionResult(value: unknown): boolean | null {
+  if (value === true || value === 'true') return true;
+  if (value === false || value === 'false') return false;
+  return null;
+}
 
 export const ConditionNode = ({ id, data, selected }: any) => {
+  const execState = useAtomValue(nodeExecutionFamily(id));
+  const branchResult = parseConditionResult(execState.outputs?.result);
+  const isRunning = execState.status === 'running' || execState.status === 'retrying';
+  const trueActive = branchResult === true;
+  const falseActive = branchResult === false;
+
   return (
     <BaseNode
       nodeId={id}
@@ -28,11 +42,39 @@ export const ConditionNode = ({ id, data, selected }: any) => {
       }
     >
       <div className="mx-5 mb-5 pt-4 border-t border-stone-100 grid grid-cols-2 gap-2">
-        <div className="text-center p-2 rounded-lg bg-stone-50">
-          <span className="text-[10px] font-bold text-blue-600 block mb-1">TRUE</span>
+        <div
+          className={`text-center p-2 rounded-lg transition-colors ${
+            trueActive
+              ? 'bg-blue-100 ring-1 ring-blue-300'
+              : isRunning
+                ? 'bg-blue-50/60'
+                : 'bg-stone-50'
+          }`}
+        >
+          <span
+            className={`text-[10px] font-bold block mb-1 ${
+              trueActive ? 'text-blue-700' : isRunning ? 'text-blue-500' : 'text-stone-400'
+            }`}
+          >
+            TRUE
+          </span>
         </div>
-        <div className="text-center p-2 rounded-lg bg-stone-50">
-          <span className="text-[10px] font-bold text-stone-400 block mb-1">FALSE</span>
+        <div
+          className={`text-center p-2 rounded-lg transition-colors ${
+            falseActive
+              ? 'bg-blue-100 ring-1 ring-blue-300'
+              : isRunning
+                ? 'bg-blue-50/60'
+                : 'bg-stone-50'
+          }`}
+        >
+          <span
+            className={`text-[10px] font-bold block mb-1 ${
+              falseActive ? 'text-blue-700' : isRunning ? 'text-blue-500' : 'text-stone-400'
+            }`}
+          >
+            FALSE
+          </span>
         </div>
       </div>
     </BaseNode>
