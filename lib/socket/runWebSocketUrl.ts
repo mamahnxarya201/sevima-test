@@ -7,6 +7,12 @@ export function runWebSocketUrl(runId: string, token: string): string {
   return `${proto}//${window.location.host}/api/ws/runs/${runId}?token=${encodeURIComponent(token)}`;
 }
 
+export function executionLogsWebSocketUrl(token: string): string {
+  if (typeof window === 'undefined') return '';
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${window.location.host}/api/ws/execution-logs?token=${encodeURIComponent(token)}`;
+}
+
 export function waitForWebSocketOpen(ws: WebSocket, timeoutMs = 20000): Promise<void> {
   return new Promise((resolve, reject) => {
     if (ws.readyState === WebSocket.OPEN) {
