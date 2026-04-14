@@ -33,6 +33,8 @@ const HttpConfigSchema = z.object({
 const DagNodeSchema = z.object({
   id: z.string().min(1).regex(/^[a-z0-9_-]+$/, 'Node id must be lowercase alphanumeric with _ or -'),
   type: z.enum(['HTTP_CALL', 'SCRIPT_EXECUTION', 'DELAY', 'CONDITION']),
+  title: z.string().max(500).optional(),
+  description: z.string().max(5000).optional(),
   image: z.string().optional(),
   script: z.string().optional(),
   runtime: z.enum(['python', 'node', 'sh']).optional(),
@@ -71,7 +73,8 @@ const DagSchemaZod = z.object({
  * Patterns that indicate shell injection attempts in script fields.
  * Blocks unquoted subshell execution, command chaining, and pipe redirection.
  */
-const INJECTION_PATTERNS = [
+/** Full set: for scripts executed as `sh -c` (DELAY, SCRIPT with runtime sh). */
+const SHELL_INJECTION_PATTERNS = [
   /\$\(.*\)/,           // $(command)
   /`[^`]*`/,            // `backtick substitution`
   /[^'"]\s*&&\s*[^'"]/, // cmd && cmd (outside quotes — rough heuristic)
@@ -82,10 +85,44 @@ const INJECTION_PATTERNS = [
   />\s*\/etc/,          // redirect to /etc
 ];
 
-function checkInjection(script: string): string | null {
-  for (const pattern of INJECTION_PATTERNS) {
+/**
+ * Node/Python/CONDITION run via `node -e` / `python3 -c` — not a shell.
+ * `||` / `&&` are valid JS/Python and must not false-positive (e.g. `x || 0`).
+ */
+const NON_SHELL_INJECTION_PATTERNS = [
+  /\$\(.*\)/,
+  /`[^`]*`/,
+  /;\s*rm\s/,
+  /;\s*curl\s/,
+  /;\s*wget\s/,
+  />\s*\/etc/,
+];
+
+function scriptRunsUnderShell(node: DagNode): boolean {
+  if (node.type === 'DELAY') return true;
+  if (node.type === 'CONDITION') return false;
+  if (node.type === 'SCRIPT_EXECUTION') {
+    const rt = node.runtime ?? 'node';
+    return rt === 'sh';
+  }
+  return false;
+}
+
+function checkInjection(script: string, node: DagNode): string | null {
+  const patterns = scriptRunsUnderShell(node) ? SHELL_INJECTION_PATTERNS : NON_SHELL_INJECTION_PATTERNS;
+  for (const pattern of patterns) {
     if (pattern.test(script)) {
       return `Possible injection detected in script: "${script.slice(0, 60)}"`;
+    }
+  }
+  return null;
+}
+
+/** HTTP URLs are interpolated into curl — keep stricter shell-oriented heuristics. */
+function checkHttpUrlInjection(url: string): string | null {
+  for (const pattern of SHELL_INJECTION_PATTERNS) {
+    if (pattern.test(url)) {
+      return `Possible injection detected in http.url: "${url.slice(0, 60)}"`;
     }
   }
   return null;
@@ -139,6 +176,39 @@ function kahnSort(nodes: DagNode[], edges: DagSchema['edges']): DagNode[][] | nu
   return levels;
 }
 
+/**
+ * Scripts that use `input.<nodeId>.field` require a direct edge from `nodeId` into the consumer;
+ * otherwise the consumer runs in parallel with (or before) the producer and merged `input` is empty.
+ */
+function validateInputNodeReferences(dag: DagSchema): string[] {
+  const errors: string[] = [];
+  const nodeIds = new Set(dag.nodes.map((n) => n.id));
+  const preds = new Map<string, Set<string>>();
+  for (const e of dag.edges) {
+    if (!preds.has(e.to)) preds.set(e.to, new Set());
+    preds.get(e.to)!.add(e.from);
+  }
+
+  const re = /\binput\.([a-z0-9_-]+)\./g;
+  for (const node of dag.nodes) {
+    if (node.type !== 'CONDITION' && node.type !== 'SCRIPT_EXECUTION') continue;
+    const script = node.script ?? '';
+    const r = new RegExp(re.source, 'g');
+    let m: RegExpExecArray | null;
+    while ((m = r.exec(script)) !== null) {
+      const ref = m[1];
+      if (!nodeIds.has(ref)) continue;
+      const predSet = preds.get(node.id) ?? new Set();
+      if (!predSet.has(ref)) {
+        errors.push(
+          `[logic] Node "${node.id}" references input.${ref}… but has no incoming edge from "${ref}". Add an edge from "${ref}" to "${node.id}".`
+        );
+      }
+    }
+  }
+  return errors;
+}
+
 // ─────────────────────────────────────────────
 // PUBLIC API
 // ─────────────────────────────────────────────
@@ -174,11 +244,11 @@ export function validateDag(input: unknown): ValidationResult {
   // Layer 3: Security — injection guard on scripts
   for (const node of dag.nodes) {
     if (node.script) {
-      const injectionError = checkInjection(node.script);
+      const injectionError = checkInjection(node.script, node);
       if (injectionError) errors.push(`[security] ${node.id}: ${injectionError}`);
     }
     if (node.http?.url) {
-      const injectionError = checkInjection(node.http.url);
+      const injectionError = checkHttpUrlInjection(node.http.url);
       if (injectionError) errors.push(`[security] ${node.id}: ${injectionError}`);
     }
   }
@@ -193,6 +263,11 @@ export function validateDag(input: unknown): ValidationResult {
       errors: ['[logical] DAG contains a cycle — Kahn\'s topological sort failed'],
       levels: [],
     };
+  }
+
+  const inputRefErrors = validateInputNodeReferences(dag);
+  if (inputRefErrors.length > 0) {
+    return { valid: false, errors: inputRefErrors, levels: [] };
   }
 
   return { valid: true, errors: [], levels };

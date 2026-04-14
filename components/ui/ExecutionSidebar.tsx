@@ -6,6 +6,7 @@ import { useAtomValue } from 'jotai';
 import type { Node } from '@xyflow/react';
 import {
   nodeExecutionFamily,
+  runFailureDetailAtom,
   runStreamErrorAtom,
   runStreamStatusAtom,
   type DAGExecutionPayload,
@@ -180,10 +181,40 @@ function StepRowBody({
   );
 }
 
-function LiveTimelineItem({ node, isLast }: { node: Node; isLast: boolean }) {
-  const state = useAtomValue(nodeExecutionFamily(node.id));
-  const headerTitle = nodeHeaderTitle(String(node.type));
-  return <StepRowBody state={{ ...state, nodeId: node.id }} headerTitle={headerTitle} isLast={isLast} />;
+function useLiveExecutionStates(nodes: Node[]): Map<string, DAGExecutionPayload> {
+  const states = new Map<string, DAGExecutionPayload>();
+  for (const node of nodes) {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const s = useAtomValue(nodeExecutionFamily(node.id));
+    states.set(node.id, s);
+  }
+  return states;
+}
+
+function LiveTimeline({ nodes }: { nodes: Node[] }) {
+  const states = useLiveExecutionStates(nodes);
+  const active = nodes.filter((n) => states.get(n.id)?.status !== 'idle');
+
+  if (active.length === 0) {
+    return <p className="text-[12px] text-[#2f342e]/60">Waiting for step events…</p>;
+  }
+
+  return (
+    <>
+      {active.map((node, i) => {
+        const state = states.get(node.id)!;
+        const headerTitle = nodeHeaderTitle(String(node.type));
+        return (
+          <StepRowBody
+            key={node.id}
+            state={{ ...state, nodeId: node.id }}
+            headerTitle={headerTitle}
+            isLast={i === active.length - 1}
+          />
+        );
+      })}
+    </>
+  );
 }
 
 function StaticTimelineItem({
@@ -219,6 +250,7 @@ function RunHistoryBlock({
 }) {
   const byStep = new Map(run.stepRuns.map((s) => [s.stepId, s]));
   const { success, failed, total } = summarizeRun(run.stepRuns);
+  const touchedNodes = nodes.filter((n) => byStep.has(n.id));
 
   return (
     <div className="rounded-[1.25rem] border border-[#afb3ac]/15 bg-[#fafaf5] p-4">
@@ -229,12 +261,12 @@ function RunHistoryBlock({
         </span>
       </div>
       <div className="flex flex-col">
-        {nodes.map((node, i) => (
+        {touchedNodes.map((node, i) => (
           <StaticTimelineItem
             key={`${run.id}-${node.id}`}
             node={node}
             step={byStep.get(node.id)}
-            isLast={i === nodes.length - 1}
+            isLast={i === touchedNodes.length - 1}
           />
         ))}
       </div>
@@ -257,6 +289,7 @@ export const ExecutionSidebar = ({
 }) => {
   const streamStatus = useAtomValue(runStreamStatusAtom);
   const streamError = useAtomValue(runStreamErrorAtom);
+  const runFailureDetail = useAtomValue(runFailureDetailAtom);
   const streamFailed = streamStatus === 'error';
 
   const [runHistory, setRunHistory] = useState<WorkflowRunsListResponse | null>(null);
@@ -363,11 +396,23 @@ export const ExecutionSidebar = ({
         </div>
       )}
 
+      {!streamFailed && runFailureDetail && (
+        <div className="border-b border-red-200 bg-red-50 px-6 py-4">
+          <div className="flex items-start gap-2">
+            <MaterialIcon icon="error" className="mt-0.5 shrink-0 text-lg text-red-700" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-bold text-red-900">Run failed</p>
+              <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-snug text-red-900">
+                {runFailureDetail}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto p-6">
         <div className="flex flex-col">
-          {nodes.map((node, i) => (
-            <LiveTimelineItem key={node.id} node={node} isLast={i === nodes.length - 1} />
-          ))}
+          <LiveTimeline nodes={nodes} />
         </div>
       </div>
 
@@ -406,6 +451,11 @@ export const ExecutionSidebar = ({
               {' · '}
               {latestSummary.total} steps
             </p>
+            {latestRun.errorMessage && (
+              <p className="mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap font-mono text-[10px] leading-snug text-red-800">
+                {latestRun.errorMessage}
+              </p>
+            )}
           </div>
         )}
       </div>

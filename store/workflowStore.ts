@@ -1,6 +1,8 @@
 import { atom } from 'jotai';
 import { atomWithStorage } from 'jotai/utils';
 import type { Node, Edge } from '@xyflow/react';
+import type { WorkflowSettings } from '@/lib/dag/workflowSettings';
+import { DEFAULT_WORKFLOW_SETTINGS } from '@/lib/dag/workflowSettings';
 
 /** Plain string in localStorage key `workflow_id` (legacy + current). */
 const workflowIdStorage = {
@@ -73,3 +75,12 @@ export const workflowSaveErrorAtom = atom<string | null>(null);
 
 /** Explicit checkpoint (new version row) in-flight */
 export const workflowCheckpointingAtom = atom(false);
+
+/** Workflow-level execution settings (retries, timeout, failure tolerance). Loaded from API on canvas open. */
+export const workflowSettingsAtom = atom<WorkflowSettings>({ ...DEFAULT_WORKFLOW_SETTINGS });
+
+/** Workflows list controls (hub page). */
+export const workflowsListSearchAtom = atom('');
+export const workflowsListSortAtom = atom<'updated' | 'name'>('updated');
+export const workflowsListPageAtom = atom(1);
+export const workflowsListPageSizeAtom = atom(10);

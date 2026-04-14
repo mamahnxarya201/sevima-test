@@ -8,9 +8,10 @@ type NewWorkflowModalProps = {
   open: boolean;
   onClose: () => void;
   onCreated: (workflowId: string) => void;
+  canCreate?: boolean;
 };
 
-export function NewWorkflowModal({ open, onClose, onCreated }: NewWorkflowModalProps) {
+export function NewWorkflowModal({ open, onClose, onCreated, canCreate = true }: NewWorkflowModalProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -20,6 +21,10 @@ export function NewWorkflowModal({ open, onClose, onCreated }: NewWorkflowModalP
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!canCreate) {
+      setError('You do not have permission to create workflows.');
+      return;
+    }
     const trimmed = name.trim();
     if (!trimmed) {
       setError('Name is required');
@@ -165,7 +170,7 @@ export function NewWorkflowModal({ open, onClose, onCreated }: NewWorkflowModalP
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !canCreate}
               className="rounded-xl bg-[#3a6095] px-5 py-2.5 text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-[#2c4c77] active:bg-[#264060] disabled:opacity-50"
             >
               {submitting ? 'Creating…' : 'Create'}

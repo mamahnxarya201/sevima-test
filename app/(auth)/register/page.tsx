@@ -4,9 +4,11 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { authClient } from '@/lib/auth/auth-client';
+import { useRedirectIfAuthenticated } from '@/hooks/useRequireAuth';
 import { MaterialIcon } from '@/components/ui/MaterialIcon';
 
 export default function RegisterPage() {
+  const ready = useRedirectIfAuthenticated();
   const router = useRouter();
   const [form, setForm] = useState({
     tenantName: '',
@@ -77,11 +79,16 @@ export default function RegisterPage() {
     }
   }
 
+  if (!ready) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#fafaf5] font-['Manrope'] text-[13px] font-semibold text-[#afb3ac]">
+        Loading…
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#fafaf5]">
-      <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet" />
-      <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
-
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center gap-3 mb-4">

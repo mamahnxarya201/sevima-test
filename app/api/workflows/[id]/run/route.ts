@@ -26,6 +26,20 @@ export async function POST(
     const cfg = rateLimitConfig();
     enforceRateLimit(`workflows:run:${ctx.userId}`, cfg.mutationMax, cfg.windowMs);
 
+    /**
+     * Optional local debug trap for Network-tab testing.
+     * Guard with explicit header so normal runs are never blocked by env leftovers.
+     */
+    const shouldDebugThrow =
+      process.env.NODE_ENV !== 'production' &&
+      process.env.WORKFLOW_RUN_DEBUG_THROW === '1' &&
+      request.headers.get('x-workflow-debug-throw') === '1';
+    if (shouldDebugThrow) {
+      throw new Error(
+        'DEBUG_WORKFLOW_RUN_THROW: remove WORKFLOW_RUN_DEBUG_THROW from env — POST /run test only'
+      );
+    }
+
     const workflow = await ctx.tenantDb.workflow.findUnique({
       where: { id },
       include: {

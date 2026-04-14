@@ -8,12 +8,14 @@ import {
   defaultNodeState,
   executionMonitorActiveAtom,
   nodeExecutionFamily,
+  runFailureDetailAtom,
   runStatusAtom,
   runStreamErrorAtom,
   runStreamStatusAtom,
 } from '../store/executionStore';
 import { authClient } from '@/lib/auth/auth-client';
 import { startWorkflowRun } from '../lib/workflow/startWorkflowRun';
+import { fetchWorkflowRunById } from '../lib/workflow/fetchWorkflowRunById';
 import { runWebSocketUrl, waitForWebSocketOpen } from '../lib/socket/runWebSocketUrl';
 import type { SaveOutcome } from './useWorkflowSave';
 
@@ -37,6 +39,29 @@ function snapshotDurationMs(sr: {
   return Math.max(0, b - a);
 }
 
+/** DB is source of truth — visible in GET /api/runs/:runId (Network tab). */
+async function hydrateRunFailureFromApi(
+  runId: string,
+  token: string,
+  setRunFailureDetail: (value: string | null) => void,
+  setRunStatus: (value: 'idle' | 'running' | 'success' | 'failed') => void
+): Promise<void> {
+  try {
+    const detail = await fetchWorkflowRunById(runId, token);
+    const run = detail?.run;
+    if (!run) return;
+    const msg = run.errorMessage;
+    if (typeof msg === 'string' && msg.trim() !== '') {
+      setRunFailureDetail(msg);
+    }
+    if (run.status === 'FAILED' || run.status === 'TIMEOUT') {
+      setRunStatus('failed');
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 /**
  * POST creates a PENDING run; engine starts when this WebSocket connects.
  * Waits for WS `open` before treating the run stream as ready.
@@ -49,6 +74,7 @@ export function useWorkflowRun(save: SaveFn) {
   const setActiveRunId = useSetAtom(activeRunIdAtom);
   const setStreamStatus = useSetAtom(runStreamStatusAtom);
   const setStreamError = useSetAtom(runStreamErrorAtom);
+  const setRunFailureDetail = useSetAtom(runFailureDetailAtom);
   const setExecutionMonitor = useSetAtom(executionMonitorActiveAtom);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -74,6 +100,7 @@ export function useWorkflowRun(save: SaveFn) {
     setStreamStatus('connecting');
     setRunStatus('idle');
     setStreamError(null);
+    setRunFailureDetail(null);
 
     // Clear persisted per-node UI (atomWithStorage) so a failed WS does not show last run's "Completed"
     for (const n of nodes) {
@@ -95,6 +122,14 @@ export function useWorkflowRun(save: SaveFn) {
 
       const ws = new WebSocket(runWebSocketUrl(runId, token));
       wsRef.current = ws;
+
+      const scheduleHydrateFromDb = (reason: 'complete' | 'close') => {
+        void hydrateRunFailureFromApi(runId, token, setRunFailureDetail, setRunStatus).then(() => {
+          if (process.env.NODE_ENV === 'development') {
+            console.debug(`[useWorkflowRun] hydrated run failure from API (${reason})`, runId);
+          }
+        });
+      };
 
       ws.onmessage = (evt) => {
         try {
@@ -140,8 +175,17 @@ export function useWorkflowRun(save: SaveFn) {
           if (msg.type === 'step') {
             window.dispatchEvent(new CustomEvent('dag:step', { detail: msg }));
           } else if (msg.type === 'complete') {
-            setRunStatus(msg.status === 'SUCCESS' ? 'success' : 'failed');
+            const complete = msg as typeof msg & { error?: string };
+            setRunStatus(complete.status === 'SUCCESS' ? 'success' : 'failed');
+            if (complete.status !== 'SUCCESS' && typeof complete.error === 'string' && complete.error.trim() !== '') {
+              setRunFailureDetail(complete.error);
+            } else if (complete.status === 'SUCCESS') {
+              setRunFailureDetail(null);
+            }
             setStreamStatus('closed');
+            if (complete.status !== 'SUCCESS') {
+              scheduleHydrateFromDb('complete');
+            }
             ws.close();
             wsRef.current = null;
           }
@@ -166,6 +210,7 @@ export function useWorkflowRun(save: SaveFn) {
         }
         setStreamStatus((prev) => (prev === 'error' ? 'error' : 'closed'));
         wsRef.current = null;
+        scheduleHydrateFromDb('close');
       };
 
       await waitForWebSocketOpen(ws);
@@ -193,6 +238,7 @@ export function useWorkflowRun(save: SaveFn) {
     setActiveRunId,
     setStreamStatus,
     setStreamError,
+    setRunFailureDetail,
     setExecutionMonitor,
   ]);
 

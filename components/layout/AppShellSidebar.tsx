@@ -10,6 +10,7 @@ export type ShellNavItem = {
   label: string;
   icon: string;
   active?: boolean;
+  badge?: number;
 };
 
 type AppShellSidebarProps = {
@@ -47,7 +48,16 @@ export function AppShellSidebar({ items }: AppShellSidebarProps) {
             }`}
           >
             <MaterialIcon icon={item.icon} className="text-[20px]" />
-            {item.label}
+            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+            {typeof item.badge === 'number' && (
+              <span
+                className={`inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                  item.active ? 'bg-[#3a6095] text-white' : 'bg-[#e0e4dc] text-[#2f342e]/75'
+                }`}
+              >
+                {item.badge}
+              </span>
+            )}
           </Link>
         ))}
       </nav>

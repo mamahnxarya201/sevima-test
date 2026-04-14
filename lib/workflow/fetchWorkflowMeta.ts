@@ -10,6 +10,7 @@ export type WorkflowMeta = {
     activeVersion: number;
     updatedAt: string;
     createdAt: string;
+    settings?: unknown;
     versions: Array<{
       id: string;
       versionNumber: number;

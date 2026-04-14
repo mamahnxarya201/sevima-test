@@ -51,3 +51,6 @@ export const activeRunIdAtom = atom<string | null>(null);
 /** Overall run status for the header badge */
 export type RunStatus = 'idle' | 'running' | 'success' | 'failed';
 export const runStatusAtom = atom<RunStatus>('idle');
+
+/** Last workflow failure reason from engine (validation, thrown error); cleared on next run start */
+export const runFailureDetailAtom = atom<string | null>(null);
