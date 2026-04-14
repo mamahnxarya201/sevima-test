@@ -2,68 +2,154 @@
 /**
  * scripts/migrate-tenants.ts
  *
- * CLI: npm run migrate:tenants
+ * Applies pending Prisma migrations to every tenant database.
  *
- * Reads all ACTIVE tenants from the management DB and runs
- * `prisma migrate deploy` against each tenant's isolated Postgres DB.
- * Safe to run multiple times (idempotent).
+ * Usage:
+ *   npm run migrate:tenants            # migrate all active tenants
+ *   npm run migrate:tenants -- --dry   # preview which tenants would be migrated
+ *
+ * What it does:
+ *   1. Connects to the management DB
+ *   2. Fetches all tenants (optionally filtered by status)
+ *   3. For each tenant, runs `prisma migrate deploy --schema prisma/tenant/schema.prisma`
+ *      with TENANT_DATABASE_URL overridden to that tenant's connectionUrl
+ *   4. Prints a summary of successes and failures
+ *
+ * Safe by design:
+ *   - Uses `migrate deploy` (not `migrate dev`): only applies existing migration files,
+ *     never generates new ones or resets data.
+ *   - One tenant failing does not stop the others.
+ *   - Dry-run mode lets you check before committing.
  */
 
 import { execSync } from 'child_process';
 import { PrismaClient } from '../lib/generated/management-client';
-import path from 'path';
 
-const managementDb = new PrismaClient({
-  datasources: { db: { url: process.env.MANAGEMENT_DATABASE_URL } },
-});
+const SCHEMA_PATH = 'prisma/tenant/schema.prisma';
+
+interface Result {
+  tenantId: string;
+  name: string;
+  ok: boolean;
+  message: string;
+  durationMs: number;
+}
 
 async function main() {
-  console.log('🔍 Fetching active tenants from management DB…');
+  const args = process.argv.slice(2);
+  const dryRun = args.includes('--dry');
 
-  const tenants = await managementDb.tenant.findMany({
-    where: { status: 'ACTIVE' },
-    select: { id: true, name: true, connectionUrl: true },
-  });
+  console.log('╔══════════════════════════════════════════════════╗');
+  console.log('║        Tenant Database Migration Runner         ║');
+  console.log('╚══════════════════════════════════════════════════╝');
+  console.log();
 
-  if (tenants.length === 0) {
-    console.log('ℹ️  No active tenants found. Exiting.');
-    return;
+  if (dryRun) {
+    console.log('  Mode: DRY RUN (no changes will be applied)\n');
   }
 
-  console.log(`📦 Migrating ${tenants.length} tenant(s)…\n`);
+  const mgmt = new PrismaClient();
 
-  let success = 0;
-  let failed = 0;
+  try {
+    const tenants = await mgmt.tenant.findMany({
+      where: { status: 'ACTIVE' },
+      orderBy: { name: 'asc' },
+    });
 
-  for (const tenant of tenants) {
-    process.stdout.write(`  → ${tenant.name} (${tenant.id.slice(0, 8)})… `);
-    try {
-      execSync(
-        `npx prisma migrate deploy --schema ${path.join(process.cwd(), 'prisma/tenant/schema.prisma')}`,
-        {
-          stdio: 'pipe',
-          env: {
-            ...process.env,
-            TENANT_DATABASE_URL: tenant.connectionUrl,
-            DATABASE_URL: tenant.connectionUrl,
-          },
-          cwd: process.cwd(),
-        }
-      );
-      console.log('✅');
-      success++;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.log(`❌  ${message.slice(0, 120)}`);
-      failed++;
+    if (tenants.length === 0) {
+      console.log('  No active tenants found. Nothing to do.\n');
+      return;
     }
-  }
 
-  console.log(`\n✨ Done: ${success} succeeded, ${failed} failed.`);
-  await managementDb.$disconnect();
+    console.log(`  Found ${tenants.length} active tenant(s):\n`);
+    for (const t of tenants) {
+      const masked = maskConnectionUrl(t.connectionUrl);
+      console.log(`    • ${t.name} (${t.id}) → ${masked}`);
+    }
+    console.log();
+
+    if (dryRun) {
+      console.log('  Dry run complete. Re-run without --dry to apply migrations.\n');
+      return;
+    }
+
+    const results: Result[] = [];
+
+    for (let i = 0; i < tenants.length; i++) {
+      const t = tenants[i];
+      const label = `[${i + 1}/${tenants.length}] ${t.name}`;
+      process.stdout.write(`  ${label}: migrating...`);
+
+      const start = Date.now();
+      try {
+        const output = execSync(
+          `npx prisma migrate deploy --schema ${SCHEMA_PATH}`,
+          {
+            env: { ...process.env, TENANT_DATABASE_URL: t.connectionUrl },
+            timeout: 120_000, // 2 min per tenant
+            stdio: ['pipe', 'pipe', 'pipe'],
+          },
+        );
+        const ms = Date.now() - start;
+        const stdout = output.toString().trim();
+        const applied = extractAppliedCount(stdout);
+        const msg = applied > 0
+          ? `${applied} migration(s) applied`
+          : 'already up to date';
+        results.push({ tenantId: t.id, name: t.name, ok: true, message: msg, durationMs: ms });
+        process.stdout.write(`\r  ${label}: ✓ ${msg} (${ms}ms)\n`);
+      } catch (err: any) {
+        const ms = Date.now() - start;
+        const stderr = err.stderr?.toString().trim() ?? err.message ?? 'unknown error';
+        const shortErr = stderr.split('\n').slice(0, 3).join(' | ');
+        results.push({ tenantId: t.id, name: t.name, ok: false, message: shortErr, durationMs: ms });
+        process.stdout.write(`\r  ${label}: ✗ FAILED (${ms}ms)\n`);
+        console.error(`    Error: ${shortErr}\n`);
+      }
+    }
+
+    // Summary
+    const succeeded = results.filter((r) => r.ok);
+    const failed = results.filter((r) => !r.ok);
+
+    console.log('\n  ─── Summary ───────────────────────────────────');
+    console.log(`  Total:     ${results.length}`);
+    console.log(`  Succeeded: ${succeeded.length}`);
+    console.log(`  Failed:    ${failed.length}`);
+
+    if (failed.length > 0) {
+      console.log('\n  Failed tenants:');
+      for (const f of failed) {
+        console.log(`    ✗ ${f.name} (${f.tenantId}): ${f.message}`);
+      }
+      process.exitCode = 1;
+    }
+
+    console.log();
+  } finally {
+    await mgmt.$disconnect();
+  }
+}
+
+function maskConnectionUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.password) {
+      parsed.password = '****';
+    }
+    return parsed.toString();
+  } catch {
+    return url.replace(/:([^@/]+)@/, ':****@');
+  }
+}
+
+function extractAppliedCount(output: string): number {
+  // Prisma outputs "X migrations have been applied" or "already in sync"
+  const match = output.match(/(\d+)\s+migration/i);
+  return match ? parseInt(match[1], 10) : 0;
 }
 
 main().catch((err) => {
-  console.error('Fatal:', err);
-  process.exit(1);
+  console.error('\n  Fatal error:', err);
+  process.exitCode = 1;
 });
