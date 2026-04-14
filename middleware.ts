@@ -6,29 +6,35 @@
  * API routes return 401 JSON instead of redirecting.
  *
  * Public routes (no auth required):
- *   /login, /register, /api/auth/*, /api/tenants (registration)
+ *   /login, /register               — auth UI
+ *   /api/auth/*                      — Better Auth endpoints
+ *   POST /api/tenants                — tenant registration only
+ *   /api/ws/*                        — WS upgrade (handler-level JWT auth)
  */
 import { NextRequest, NextResponse } from 'next/server';
 
-const PUBLIC_PATHS = [
-  '/login',
-  '/register',
-  '/api/auth',
-  '/api/tenants',
-];
+const PUBLIC_PREFIXES = ['/login', '/register', '/api/auth', '/api/metrics'];
 
-export function middleware(request: NextRequest) {
+function isPublicRoute(request: NextRequest): boolean {
   const { pathname } = request.nextUrl;
 
-  // Allow public routes
-  if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
+  if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return true;
+
+  // Only POST /api/tenants is public (registration); GET is authenticated
+  if (pathname === '/api/tenants' && request.method === 'POST') return true;
+
+  // WS upgrades are authenticated at handler level (JWT via ?token=)
+  if (pathname.startsWith('/api/ws')) return true;
+
+  return false;
+}
+
+export function middleware(request: NextRequest) {
+  if (isPublicRoute(request)) {
     return NextResponse.next();
   }
 
-  // Allow WebSocket upgrade path (next-ws)
-  if (pathname.startsWith('/api/ws')) {
-    return NextResponse.next();
-  }
+  const { pathname } = request.nextUrl;
 
   // Check for Better Auth session cookie
   const sessionToken =
@@ -40,11 +46,9 @@ export function middleware(request: NextRequest) {
   const hasBearer = authHeader?.startsWith('Bearer ');
 
   if (!sessionToken && !hasBearer) {
-    // API routes → 401 JSON
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    // UI routes → redirect to login
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = '/login';
     loginUrl.searchParams.set('from', pathname);
