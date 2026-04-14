@@ -56,6 +56,10 @@ function buildDagNode(node: Node): DagNode {
   const type = TYPE_MAP[node.type ?? ''] ?? 'SCRIPT_EXECUTION';
   const data = (node.data ?? {}) as Record<string, unknown>;
 
+  const rawOutputs = data.outputs as string[] | undefined;
+  const defaultHttpOutputs =
+    Array.isArray(rawOutputs) && rawOutputs.length > 0 ? rawOutputs : ['body', 'statusCode'];
+
   const base: DagNode = {
     id: node.id,
     type,
@@ -65,11 +69,11 @@ function buildDagNode(node: Node): DagNode {
     retries: data.retries as number | undefined,
     retryDelayMs: data.retryDelayMs as number | undefined,
     inputs: data.inputs as Record<string, string> | undefined,
-    outputs: data.outputs as string[] | undefined,
+    outputs: undefined,
   };
 
   if (type === 'HTTP_CALL') {
-    return { ...base, http: resolveHttpConfig(data) };
+    return { ...base, http: resolveHttpConfig(data), outputs: defaultHttpOutputs };
   }
 
   const userScript = data.script as string | undefined;
@@ -78,6 +82,7 @@ function buildDagNode(node: Node): DagNode {
   if (type === 'SCRIPT_EXECUTION') {
     return {
       ...base,
+      outputs: rawOutputs,
       runtime,
       script: userScript && userScript.trim() !== '' ? userScript : DEFAULT_SCRIPT_NODE,
     };
@@ -86,6 +91,7 @@ function buildDagNode(node: Node): DagNode {
   if (type === 'DELAY') {
     return {
       ...base,
+      outputs: rawOutputs,
       runtime: 'sh',
       script: userScript && userScript.trim() !== '' ? userScript : DEFAULT_DELAY_SCRIPT,
     };
@@ -94,6 +100,7 @@ function buildDagNode(node: Node): DagNode {
   // CONDITION
   return {
     ...base,
+    outputs: rawOutputs,
     runtime,
     script: userScript && userScript.trim() !== '' ? userScript : DEFAULT_CONDITION_SCRIPT,
   };

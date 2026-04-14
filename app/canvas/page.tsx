@@ -5,14 +5,14 @@ import { useSearchParams } from 'next/navigation';
 import {
   ReactFlow,
   addEdge,
-  useNodesState,
-  useEdgesState,
   applyNodeChanges,
   applyEdgeChanges,
   Background,
   Panel,
   useReactFlow,
   ReactFlowProvider,
+  type Node,
+  type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Provider, useSetAtom, useAtomValue, useAtom, useStore } from 'jotai';
@@ -29,12 +29,37 @@ import { ConditionNode } from '../../components/nodes/ConditionNode';
 import { ScriptNode } from '../../components/nodes/ScriptNode';
 import { DelayNode } from '../../components/nodes/DelayNode';
 
-import { nodeExecutionFamily, isLiveConnectionEnabledAtom } from '../../store/executionStore';
-import { nodesAtom, edgesAtom, persistedWorkflowIdAtom, workflowTitleAtom } from '../../store/workflowStore';
-import type { DAGExecutionPayload, ExecutionStatus } from '../../store/executionStore';
+import {
+  nodeExecutionFamily,
+  executionMonitorActiveAtom,
+  runStatusAtom,
+  runStreamStatusAtom,
+} from '../../store/executionStore';
+import {
+  nodesAtom,
+  edgesAtom,
+  persistedWorkflowIdAtom,
+  workflowTitleAtom,
+  workflowActiveVersionAtom,
+  workflowViewingVersionAtom,
+  workflowPendingVersionLoadAtom,
+  workflowCreatorAtom,
+  workflowVersionsListAtom,
+  workflowLastUpdatedAtom,
+  tenantIdAtom,
+} from '../../store/workflowStore';
+import { useCanvasDraftPersistence, readLocalCanvasDraft } from '../../hooks/useCanvasDraftPersistence';
+import { useDebouncedWorkflowSave } from '../../hooks/useDebouncedWorkflowSave';
+import type { ExecutionStatus } from '../../store/executionStore';
 import { authClient } from '@/lib/auth/auth-client';
 import { parseEditorState } from '@/lib/canvas/editorState';
 import { importDagToCanvas } from '@/lib/canvas/dagImporter';
+import {
+  fetchWorkflowMeta,
+  fetchWorkflowAtVersion,
+  versionSummariesFromWorkflow,
+} from '@/lib/workflow/fetchWorkflowMeta';
+import { formatRelativeTime } from '@/lib/datetime/formatRelativeTime';
 
 const nodeTypes = {
   http: HttpNode,
@@ -64,15 +89,37 @@ function WorkflowCanvas() {
   const [nodes, setNodes] = useAtom(nodesAtom);
   const [edges, setEdges] = useAtom(edgesAtom);
   const [inputMode, setInputMode] = React.useState<'mouse' | 'trackpad'>('mouse');
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, setViewport, fitView } = useReactFlow();
   const store = useStore();
 
   const searchParams = useSearchParams();
   const workflowIdFromUrl = searchParams.get('workflowId');
+  const workflowLoadScopeRef = React.useRef<string>('');
+  const versionSwitchGenerationRef = React.useRef(0);
   const [persistedWorkflowId, setPersistedWorkflowId] = useAtom(persistedWorkflowIdAtom);
   const setWorkflowTitle = useSetAtom(workflowTitleAtom);
+  const setWorkflowActiveVersion = useSetAtom(workflowActiveVersionAtom);
+  const setWorkflowCreator = useSetAtom(workflowCreatorAtom);
+  const setWorkflowVersionsList = useSetAtom(workflowVersionsListAtom);
+  const setWorkflowLastUpdated = useSetAtom(workflowLastUpdatedAtom);
+  const setViewingVersion = useSetAtom(workflowViewingVersionAtom);
+  const setPendingVersionLoad = useSetAtom(workflowPendingVersionLoadAtom);
+  const pendingVersionLoad = useAtomValue(workflowPendingVersionLoadAtom);
+  const viewingVersion = useAtomValue(workflowViewingVersionAtom);
+  const activeVersionForSave = useAtomValue(workflowActiveVersionAtom);
 
   const effectiveWorkflowId = workflowIdFromUrl ?? persistedWorkflowId;
+  const tenantId = useAtomValue(tenantIdAtom);
+
+  /** False until GET /api/workflows has applied graph + viewport — avoids writing nodes=[] over a good draft. */
+  const [canvasHydrated, setCanvasHydrated] = useState(false);
+
+  const persistCanvasDraft =
+    !effectiveWorkflowId || !tenantId ? true : canvasHydrated;
+
+  const { onViewportChange, withPersistSuppressed } = useCanvasDraftPersistence(effectiveWorkflowId, {
+    persistEnabled: persistCanvasDraft,
+  });
 
   useEffect(() => {
     if (workflowIdFromUrl) {
@@ -81,39 +128,137 @@ function WorkflowCanvas() {
   }, [workflowIdFromUrl, setPersistedWorkflowId]);
 
   useEffect(() => {
+    if (!effectiveWorkflowId) {
+      workflowLoadScopeRef.current = '';
+      setWorkflowActiveVersion(null);
+      setWorkflowCreator(null);
+      setWorkflowVersionsList([]);
+      setWorkflowLastUpdated('—');
+      setViewingVersion(null);
+      setPendingVersionLoad(null);
+    }
+  }, [
+    effectiveWorkflowId,
+    setWorkflowActiveVersion,
+    setWorkflowCreator,
+    setWorkflowVersionsList,
+    setWorkflowLastUpdated,
+    setViewingVersion,
+    setPendingVersionLoad,
+  ]);
+
+  useEffect(() => {
+    if (!effectiveWorkflowId || !tenantId) {
+      setCanvasHydrated(false);
+      return;
+    }
+    const scope = `${tenantId}:${effectiveWorkflowId}`;
+    const scopeChanged = workflowLoadScopeRef.current !== scope;
+    workflowLoadScopeRef.current = scope;
+
     let cancelled = false;
+    setCanvasHydrated(false);
+
+    const markHydrated = () => {
+      if (!cancelled) setCanvasHydrated(true);
+    };
+
     (async () => {
-      if (!effectiveWorkflowId) return;
       try {
+        if (scopeChanged) {
+          setViewingVersion(null);
+          setPendingVersionLoad(null);
+        }
         const { data: tokenData } = await authClient.token();
         const token = tokenData?.token ?? '';
-        if (!token) return;
-        const res = await fetch(`/api/workflows/${effectiveWorkflowId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok || cancelled) return;
-        const data = await res.json();
-        const w = data.workflow;
-        const ver = w.versions?.[0];
-        if (cancelled) return;
-        setWorkflowTitle(w.name ?? 'Untitled workflow');
-        const parsed = parseEditorState(ver?.editorState);
-        if (parsed && parsed.nodes.length > 0) {
-          setNodes(parsed.nodes);
-          setEdges(parsed.edges);
-        } else {
-          const { nodes: n, edges: e } = importDagToCanvas(ver?.definition);
-          setNodes(n);
-          setEdges(e);
+        if (!token) {
+          markHydrated();
+          return;
         }
+        const meta = await fetchWorkflowMeta(effectiveWorkflowId, token);
+        if (!meta || cancelled) {
+          markHydrated();
+          return;
+        }
+        const w = meta.workflow;
+        const ver = w.versions?.[0];
+        setWorkflowCreator(meta.createdBy);
+        setWorkflowVersionsList(versionSummariesFromWorkflow(w));
+        setWorkflowLastUpdated(formatRelativeTime(w.updatedAt));
+        if (typeof w.activeVersion === 'number') {
+          setWorkflowActiveVersion(w.activeVersion);
+        }
+        if (cancelled) return;
+        const draft = readLocalCanvasDraft(tenantId, effectiveWorkflowId);
+
+        withPersistSuppressed(() => {
+          const serverName = w.name ?? 'Untitled workflow';
+          const titleFromDraft =
+            draft &&
+            typeof draft.workflowTitle === 'string' &&
+            draft.workflowTitle.trim() !== ''
+              ? draft.workflowTitle
+              : null;
+          setWorkflowTitle(titleFromDraft ?? serverName);
+          const parsed = parseEditorState(ver?.editorState);
+          if (parsed && parsed.nodes.length > 0) {
+            setNodes(parsed.nodes);
+            setEdges(parsed.edges);
+          } else {
+            const { nodes: n, edges: e } = importDagToCanvas(ver?.definition);
+            const serverEmpty = n.length === 0 && e.length === 0;
+            if (serverEmpty && draft && (draft.nodes.length > 0 || draft.edges.length > 0)) {
+              setNodes(draft.nodes);
+              setEdges(draft.edges);
+            } else {
+              setNodes(n);
+              setEdges(e);
+            }
+          }
+        });
+
+        requestAnimationFrame(() => {
+          if (cancelled) return;
+          if (draft?.viewport) {
+            setViewport(draft.viewport);
+          } else {
+            fitView({ padding: 0.1 });
+          }
+          // After React commits graph + viewport, allow draft persistence (see useCanvasDraftPersistence).
+          setTimeout(markHydrated, 0);
+        });
       } catch (e) {
         console.error('[canvas] load workflow', e);
+        markHydrated();
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [effectiveWorkflowId, setWorkflowTitle, setNodes, setEdges]);
+  }, [
+    effectiveWorkflowId,
+    tenantId,
+    setWorkflowTitle,
+    setNodes,
+    setEdges,
+    setViewport,
+    fitView,
+    withPersistSuppressed,
+    setWorkflowActiveVersion,
+    setWorkflowCreator,
+    setWorkflowVersionsList,
+    setWorkflowLastUpdated,
+    setViewingVersion,
+    setPendingVersionLoad,
+  ]);
+
+  const canAutosaveDraft =
+    viewingVersion === null ||
+    (activeVersionForSave != null && viewingVersion === activeVersionForSave);
+
+  useDebouncedWorkflowSave(
+    !!effectiveWorkflowId && !!tenantId && canvasHydrated && canAutosaveDraft
+  );
 
   const onNodesChange = useCallback(
     (changes: any) => setNodes((nds) => applyNodeChanges(changes, nds)),
@@ -141,7 +286,110 @@ function WorkflowCanvas() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedNode, setSelectedNode] = useState<{ id: string; type: string } | null>(null);
 
-  const isLive = useAtomValue(isLiveConnectionEnabledAtom);
+  useEffect(() => {
+    const target = pendingVersionLoad;
+    if (target == null || !effectiveWorkflowId || !tenantId) return;
+    const myGen = ++versionSwitchGenerationRef.current;
+    let cancelled = false;
+
+    const clearPendingIfStale = () => {
+      setPendingVersionLoad((prev) => (prev === target ? null : prev));
+    };
+
+    (async () => {
+      try {
+        const { data: tokenData } = await authClient.token();
+        const token = tokenData?.token ?? '';
+        if (!token) {
+          clearPendingIfStale();
+          return;
+        }
+        const meta = await fetchWorkflowAtVersion(effectiveWorkflowId, target, token);
+        if (cancelled || myGen !== versionSwitchGenerationRef.current) return;
+        if (!meta) {
+          clearPendingIfStale();
+          return;
+        }
+        const w = meta.workflow;
+        const ver = w.versions?.[0];
+        if (!ver) {
+          clearPendingIfStale();
+          return;
+        }
+
+        let nextNodes: Node[];
+        let nextEdges: Edge[];
+        const parsed = parseEditorState(ver.editorState);
+        if (parsed && parsed.nodes.length > 0) {
+          nextNodes = parsed.nodes;
+          nextEdges = parsed.edges;
+        } else {
+          const imp = importDagToCanvas(ver.definition);
+          nextNodes = imp.nodes;
+          nextEdges = imp.edges;
+        }
+
+        if (myGen !== versionSwitchGenerationRef.current) return;
+
+        withPersistSuppressed(() => {
+          setWorkflowTitle(w.name ?? 'Untitled workflow');
+          setNodes(nextNodes);
+          setEdges(nextEdges);
+        });
+
+        for (const n of nextNodes) {
+          store.set(nodeExecutionFamily(n.id), {
+            nodeId: n.id,
+            status: 'idle',
+          });
+        }
+
+        setSelectedNode(null);
+        setSidebarOpen(false);
+
+        requestAnimationFrame(() => {
+          if (cancelled || myGen !== versionSwitchGenerationRef.current) return;
+          fitView({ padding: 0.1 });
+          setTimeout(() => {
+            if (cancelled || myGen !== versionSwitchGenerationRef.current) return;
+            const head = w.activeVersion;
+            if (typeof head === 'number' && target === head) {
+              setViewingVersion(null);
+            } else {
+              setViewingVersion(target);
+            }
+            clearPendingIfStale();
+          }, 0);
+        });
+      } catch (e) {
+        console.error('[canvas] load workflow version', e);
+        clearPendingIfStale();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    pendingVersionLoad,
+    effectiveWorkflowId,
+    tenantId,
+    setWorkflowTitle,
+    setNodes,
+    setEdges,
+    withPersistSuppressed,
+    fitView,
+    store,
+    setViewingVersion,
+    setPendingVersionLoad,
+  ]);
+
+  const executionMonitorActive = useAtomValue(executionMonitorActiveAtom);
+  const setExecutionMonitorActive = useSetAtom(executionMonitorActiveAtom);
+  const runStatus = useAtomValue(runStatusAtom);
+  const runStreamStatus = useAtomValue(runStreamStatusAtom);
+  const runSidebarLocked =
+    runStatus === 'running' || runStreamStatus === 'connecting';
 
   useEffect(() => {
     function handleDagStep(evt: Event) {
@@ -151,6 +399,7 @@ function WorkflowCanvas() {
         logs?: string;
         error?: string;
         outputs?: Record<string, unknown>;
+        durationMs?: number;
       };
 
       store.set(nodeExecutionFamily(msg.stepId), {
@@ -159,6 +408,7 @@ function WorkflowCanvas() {
         logs: msg.logs,
         error: msg.error,
         outputs: msg.outputs,
+        durationMs: msg.durationMs,
       });
     }
 
@@ -171,21 +421,6 @@ function WorkflowCanvas() {
     document.addEventListener('contextmenu', handler);
     return () => document.removeEventListener('contextmenu', handler);
   }, []);
-
-  useEffect(() => {
-    if (isLive) return;
-    const t = setTimeout(() => {
-      nodes.forEach((n, i) => {
-        const statuses: ExecutionStatus[] = ['success', 'success', 'idle', 'idle', 'idle'];
-        store.set(nodeExecutionFamily(n.id), {
-          nodeId: n.id,
-          status: statuses[i % statuses.length] ?? 'idle',
-          isLoading: i === 3,
-        });
-      });
-    }, 500);
-    return () => clearTimeout(t);
-  }, [isLive, nodes, store]);
 
   const onConnect = useCallback(
     (params: any) =>
@@ -243,11 +478,15 @@ function WorkflowCanvas() {
     setMenu({ x: e.clientX, y: e.clientY, entity: { id: edge.id, type: 'edge' } });
   }, []);
 
-  const onNodeDoubleClick = useCallback((e: React.MouseEvent, node: any) => {
-    e.preventDefault();
-    setSelectedNode({ id: node.id, type: node.type });
-    setSidebarOpen(true);
-  }, []);
+  const onNodeDoubleClick = useCallback(
+    (e: React.MouseEvent, node: any) => {
+      e.preventDefault();
+      if (runSidebarLocked) return;
+      setSelectedNode({ id: node.id, type: node.type });
+      setSidebarOpen(true);
+    },
+    [runSidebarLocked]
+  );
 
   return (
     <div className="flex h-screen w-full bg-[#fafaf5] font-sans overflow-hidden text-[#2f342e]">
@@ -289,9 +528,8 @@ function WorkflowCanvas() {
                 setMenu({ x: e.clientX, y: e.clientY, entity: { id: null, type: 'pane' } });
                 setMiniMenu(null);
               }}
+              onViewportChange={onViewportChange}
               nodeTypes={nodeTypes}
-              fitView
-              fitViewOptions={{ padding: 0.1 }}
               panOnScroll={inputMode === 'trackpad'}
               zoomOnScroll={inputMode === 'mouse'}
               panOnDrag={false}
@@ -393,18 +631,23 @@ function WorkflowCanvas() {
             </ReactFlow>
           </div>
 
-          {sidebarOpen && selectedNode && (
-            <>
-              {isLive ? (
-                <ExecutionSidebar nodes={nodes} onClose={() => setSidebarOpen(false)} />
-              ) : (
-                <NodeSettings
-                  nodeId={selectedNode.id}
-                  nodeType={selectedNode.type}
-                  onClose={() => setSidebarOpen(false)}
-                />
-              )}
-            </>
+          {executionMonitorActive && (
+            <ExecutionSidebar
+              nodes={nodes}
+              workflowId={effectiveWorkflowId ?? null}
+              runLocked={runSidebarLocked}
+              onClose={() => {
+                setExecutionMonitorActive(false);
+                if (!selectedNode) setSidebarOpen(false);
+              }}
+            />
+          )}
+          {sidebarOpen && !executionMonitorActive && selectedNode && (
+            <NodeSettings
+              nodeId={selectedNode.id}
+              nodeType={selectedNode.type}
+              onClose={() => setSidebarOpen(false)}
+            />
           )}
         </div>
       </main>
